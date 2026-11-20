@@ -1,0 +1,8 @@
+
+# 运行时数据（用户自己的配置、缓存、备份）
+data/
+node_modules/
+backups/
+.artifacts/
+logs/
+*.log

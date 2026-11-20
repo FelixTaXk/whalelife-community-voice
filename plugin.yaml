@@ -1,0 +1,10 @@
+id: voice
+name: 语音模块
+version: 0.9.3
+description: 语音模型接入与共享配置：本机 Breeze 或 OpenAI 兼容网络 TTS；支持一键部署和更新 Breeze 运行包；说话、唱歌分别由子插件负责，唱歌支持带进度和日志的一键生成念白、曲目库和 Seed-VC 音色转换
+apiVersion: "1.0.0"
+depends: [models, web, tools]
+sub: [speak, sing]
+console:
+  groupChildren: true
+repository: https://github.com/FelixTaXk/whalelife-community-voice
