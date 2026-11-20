@@ -27,7 +27,7 @@ plugins/voice/
 
 - 自动检查 Breeze 运行包、q8_0 模型和音色文件；已有可用文件就跳过，不会重复下载。
 - 运行包有新版本时，卡片会出现「更新 Breeze 到 vX」；只替换运行包，模型和音色保留，更新时短暂停一次语音。
-- 缺运行包时下载 GitHub 最新 Windows Vulkan 包，解压到 `data/breeze/bin`。GitHub 下载走 Node fetch，证书链异常时自动回退系统 `curl`。
+- 缺运行包时下载 GitHub 最新 Windows Vulkan 包，解压前先用该发行资产自带的官方 SHA256 摘要校验；摘要缺失或不匹配时停止安装，坏包会被删除。GitHub 下载走 Node fetch，证书链异常时自动回退系统 `curl`。
 - 缺模型时下载 `breeze-tts-2-q8_0.gguf`（约 3.6GB）到 `data/breeze/models`。
 - 如果配置里还是旧的外部路径，会优先迁移到插件目录：同盘用硬链接，跨盘自动复制。
 - 启动服务后，如果音色目录为空，会用一段固定描述生成默认音色；已有音色则直接采用。
@@ -88,7 +88,7 @@ await voice.sing({ sourcePath: '...' }); // 通过 voice_sing 工具转给唱歌
 - 唱歌页里的「上传本地人声」仍然可以直接把文件送去 Seed-VC，不写入 Breeze 目录；两种上传互不影响。
 - 默认参考音是 `refs/xiaochi_breeze_ref.wav`（周小迟，Breeze 生成，约 19.6 秒）。
 - 输出落在 `output/whalelife`，页面可试听，也可选群聊发群语音。
-- 唱歌前会让 ComfyUI 卸载模型并停掉 Breeze，避免抢显存；下一次说话会自动拉起 Breeze。
+- 唱歌前会让 ComfyUI 卸载模型，并只停掉本实例登记且仍能核对上归属的 Breeze，避免误杀另一个实例的服务；下一次说话会自动拉起 Breeze。
 
 ### 参数
 

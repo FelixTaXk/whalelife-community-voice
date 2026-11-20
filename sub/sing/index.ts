@@ -151,7 +151,7 @@ async function runSeedVc(
   const pitch = Math.floor(clampNumber(options.pitch, 0, -24, 24));
 
   await freeComfy(cfg.comfyUrl);
-  await stopBreeze();
+  await stopBreeze(cfg);
   await mkdir(SING.output, { recursive: true });
 
   const started = Date.now();

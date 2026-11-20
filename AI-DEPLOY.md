@@ -152,7 +152,7 @@ if ($Status.updateAvailable -and -not $Status.running) {
 }
 ```
 
-更新只替换 Breeze 运行包，不改模型、音色和 `config.json` 里的模型设置。更新时会短暂停掉 Breeze，完成后自动用新版本重启；`previousVersion` 会记录更新前版本，`updateAvailable=false` 表示已是最新。已是最新时调用更新接口会直接返回 `stage=done`，不会重复下载或重启。
+更新只替换 Breeze 运行包，不改模型、音色和 `config.json` 里的模型设置。下载包进入解压前，会先用该发行资产自带的官方 SHA256 摘要校验；摘要缺失或不匹配就停止安装，不会解包坏包。更新时只会短暂停掉本实例登记且仍能核对归属的 Breeze，完成后自动用新版本重启；`previousVersion` 会记录更新前版本，`updateAvailable=false` 表示已是最新。已是最新时调用更新接口会直接返回 `stage=done`，不会重复下载或重启。
 
 如果 GitHub 运行包下载报 `fetch failed`，插件会自动改用 Windows 自带的 `curl.exe` 重试；下载缓存仍在 `data/deploy`，中断后可以续传。
 

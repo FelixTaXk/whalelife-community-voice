@@ -1,6 +1,7 @@
 /*! 语音模块共享配置与基础工具：主插件、说话子插件、唱歌子插件共用。 */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -189,12 +190,66 @@ export async function freeComfy(url: string) {
   }
 }
 
+type BreezeOwner = {
+  child: ReturnType<typeof spawn>;
+  pid: number;
+  exe: string;
+  model: string;
+  baseUrl: string;
+  voicesDir: string;
+  port: number;
+  startedAt: number;
+};
+
+type ProcessInfo = { executablePath: string; commandLine: string };
+
+const BREEZE_OWNERS_KEY = Symbol.for('whalelife.voice.breeze.owners');
+const breezeOwners: Map<string, BreezeOwner> =
+  ((globalThis as any)[BREEZE_OWNERS_KEY] ??= new Map<string, BreezeOwner>());
+
+const breezeOwnerKey = (cfg: Resolved) =>
+  `${String(cfg.baseUrl || '').replace(/\/$/, '')}|${portOf(cfg.baseUrl)}|${resolve(cfg.breezeExe)}`;
+
+const normalizeProcessPath = (value: string) => {
+  const text = String(value || '').trim().replace(/^\\\\\?\\/, '');
+  return text ? resolve(text).toLowerCase() : '';
+};
+
+const processMatchesOwner = (info: ProcessInfo, owner: BreezeOwner) => {
+  if (!normalizeProcessPath(info.executablePath) || normalizeProcessPath(info.executablePath) !== normalizeProcessPath(owner.exe)) return false;
+  const command = String(info.commandLine || '').toLowerCase();
+  if (!command) return false;
+  const model = String(owner.model || '').toLowerCase();
+  const voices = String(owner.voicesDir || '').toLowerCase();
+  if (!model || !voices) return false;
+  return command.includes(model)
+    && command.includes(voices)
+    && new RegExp(`--port(?:=|\\s+)${owner.port}(?:\\s|$)`).test(command);
+};
+
 export function spawnBreeze(cfg: Resolved) {
   const child = spawn(cfg.breezeExe, [cfg.breezeModel, '--host', '127.0.0.1', '--port', String(portOf(cfg.baseUrl)),
     '--voices-dir', cfg.voicesDir, '--ws-port', '-1'], {
     detached: true, windowsHide: true, stdio: 'ignore',
   });
+  if (!child.pid) throw new Error('Breeze 启动后没有拿到进程号。');
+  const key = breezeOwnerKey(cfg);
+  const owner: BreezeOwner = {
+    child,
+    pid: child.pid,
+    exe: resolve(cfg.breezeExe),
+    model: String(cfg.breezeModel || ''),
+    baseUrl: String(cfg.baseUrl || '').replace(/\/$/, ''),
+    voicesDir: String(cfg.voicesDir || ''),
+    port: portOf(cfg.baseUrl),
+    startedAt: Date.now(),
+  };
+  breezeOwners.set(key, owner);
+  child.once('exit', () => {
+    if (breezeOwners.get(key)?.child === child) breezeOwners.delete(key);
+  });
   child.unref();
+  return owner;
 }
 
 export async function ensureBreeze(cfg: Resolved, signal: AbortSignal) {
@@ -539,11 +594,90 @@ export function runProcess(
   });
 }
 
-/** Seed-VC 和 Breeze 抢显存；唱歌前先把 Breeze 停掉，下一句说话再自动拉起。 */
-export async function stopBreeze() {
+const processInfo = async (pid: number): Promise<ProcessInfo | null> => {
   try {
-    await runProcess('C:\\Windows\\System32\\taskkill.exe', ['/IM', 'breeze-server.exe', '/F'], { timeout: 15_000 });
+    const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue; if ($p) { [pscustomobject]@{ ExecutablePath = [string]$p.ExecutablePath; CommandLine = [string]$p.CommandLine } | ConvertTo-Json -Compress }`;
+    const result = await runProcess(PS, ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 8_000 });
+    const stdout = result.stdout.replace(/^\uFEFF/, '').trim();
+    if (result.code !== 0 || !stdout) return null;
+    const value = JSON.parse(stdout);
+    return {
+      executablePath: String(value?.ExecutablePath ?? ''),
+      commandLine: String(value?.CommandLine ?? ''),
+    };
   } catch {
-    /* 没在跑就算了 */
+    return null;
   }
+};
+
+const waitForExit = async (owner: BreezeOwner, ms: number) => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (owner.child.exitCode !== null || owner.child.signalCode !== null) return true;
+    const info = await processInfo(owner.pid);
+    if (!info) return true;
+    await sleep(250);
+  }
+  return owner.child.exitCode !== null || owner.child.signalCode !== null || !(await processInfo(owner.pid));
+};
+
+/**
+ * 只停止本实例登记过、且仍能核对上可执行文件与命令行归属的 Breeze。
+ * 不按进程名批量结束，避免同一台机器上的另一个实例被误杀。
+ */
+export async function stopBreeze(cfg?: Resolved) {
+  const key = cfg ? breezeOwnerKey(cfg) : '';
+  const targets = [...breezeOwners.entries()].filter(([k]) => !cfg || k === key);
+  let stopped = 0;
+  let skipped = 0;
+  for (const [ownerKey, owner] of targets) {
+    if (owner.child.exitCode !== null || owner.child.signalCode !== null) {
+      breezeOwners.delete(ownerKey);
+      continue;
+    }
+    const info = await processInfo(owner.pid);
+    if (!info || !processMatchesOwner(info, owner)) {
+      skipped++;
+      breezeOwners.delete(ownerKey);
+      continue;
+    }
+    try {
+      owner.child.kill();
+    } catch {
+      /* 进程可能已经退出 */
+    }
+    const exited = await waitForExit(owner, 5_000);
+    if (!exited) {
+      const again = await processInfo(owner.pid);
+      if (again && processMatchesOwner(again, owner)) {
+        try {
+          await runProcess('C:\\Windows\\System32\\taskkill.exe', ['/PID', String(owner.pid), '/F'], { timeout: 15_000 });
+        } catch {
+          /* 结束失败时保留登记，交给下次重试 */
+          continue;
+        }
+      }
+    }
+    breezeOwners.delete(ownerKey);
+    stopped++;
+  }
+  return { stopped, skipped };
+}
+
+export async function sha256File(file: string) {
+  return await new Promise<string>((ok, fail) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(file);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', fail);
+    stream.on('end', () => ok(hash.digest('hex')));
+  });
+}
+
+export async function verifyFileSha256(file: string, expected: string, label = '文件') {
+  const want = String(expected ?? '').trim().toLowerCase().replace(/^sha256:/, '');
+  if (!/^[0-9a-f]{64}$/.test(want)) throw new Error(`${label}缺少可信的 SHA256 摘要，拒绝使用。`);
+  const actual = await sha256File(file);
+  if (actual !== want) throw new Error(`${label} SHA256 校验失败：期望 ${want}，实际 ${actual}。`);
+  return actual;
 }

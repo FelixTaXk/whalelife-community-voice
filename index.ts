@@ -9,7 +9,8 @@ import type { Context } from '../../core/context.ts';
 import {
   apiBase, authHeaders, BREEZE_MODEL_FILE, BREEZE_ROOT, DATA_ROOT, DEFAULTS, ensureBreeze,
   ensureDefaultVoice as ensureDefaultVoiceCore, esc, healthy, HIVE_MODEL, HIVE_VOICES, isInside,
-  isLoopback, normalize, PLUGIN_ROOT, rootBase, runProcess, stopBreeze, synth, type Cfg, type Resolved,
+  isLoopback, normalize, PLUGIN_ROOT, rootBase, runProcess, stopBreeze, synth, verifyFileSha256,
+  type Cfg, type Resolved,
 } from './shared.ts';
 
 export function apply(ctx: Context) {
@@ -130,13 +131,14 @@ export function apply(ctx: Context) {
 
   // ── 本机语音一键部署 ───────────────────────────────────────
   type DeployStage = 'idle' | 'check' | 'binary' | 'model' | 'start' | 'voice' | 'done' | 'error' | 'cancelled';
-  type Release = { version: string; assetName: string; assetUrl: string };
+  type Release = { version: string; assetName: string; assetUrl: string; sha256: string };
   const DEPLOY_DIR = join(DATA_ROOT, 'deploy');
   const MODEL_URL = 'https://huggingface.co/HoppouAI/Breeze-TTS-2.cpp/resolve/main/breeze-tts-2-q8_0.gguf?download=true';
   const FALLBACK_RELEASE: Release = {
     version: '0.1.7',
     assetName: 'breeze-tts-2-v0.1.7-windows-x64-vulkan.zip',
     assetUrl: 'https://github.com/HoppouAI/Breeze-TTS-2.cpp/releases/download/v0.1.7/breeze-tts-2-v0.1.7-windows-x64-vulkan.zip',
+    sha256: '63fb117e5c6b04e33ac513d6ca80c621d01bdbdebcf7a8486f872d181ae3c88f',
   };
   const deployState = {
     running: false,
@@ -198,28 +200,35 @@ export function apply(ctx: Context) {
 
   const latestRelease = async (): Promise<Release> => {
     if (releaseCache && Date.now() - releaseCache.at < 10 * 60_000) return releaseCache.value;
+    let data: any = null;
     try {
       const res = await fetch('https://api.github.com/repos/HoppouAI/Breeze-TTS-2.cpp/releases/latest', {
         headers: { 'user-agent': 'WhaleLife voice deploy', accept: 'application/vnd.github+json' },
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: any = await res.json();
-      const asset = (data?.assets ?? []).find((a: any) => /windows-x64-vulkan\.zip$/i.test(String(a?.name ?? '')));
-      if (asset?.browser_download_url) {
-        const value: Release = {
-          version: String(data?.tag_name ?? '').replace(/^v/i, '') || versionOf(asset.name),
-          assetName: String(asset.name),
-          assetUrl: String(asset.browser_download_url),
-        };
-        releaseCache = { at: Date.now(), value };
-        return value;
-      }
+      data = await res.json();
     } catch {
-      /* 网络不可用时用固定版本兜底 */
+      /* 网络不可用时用固定版本兜底；兜底包也带官方摘要。 */
+      releaseCache = { at: Date.now(), value: FALLBACK_RELEASE };
+      return FALLBACK_RELEASE;
     }
-    releaseCache = { at: Date.now(), value: FALLBACK_RELEASE };
-    return FALLBACK_RELEASE;
+    const asset = (data?.assets ?? []).find((a: any) => /windows-x64-vulkan\.zip$/i.test(String(a?.name ?? '')));
+    if (!asset?.browser_download_url) {
+      releaseCache = { at: Date.now(), value: FALLBACK_RELEASE };
+      return FALLBACK_RELEASE;
+    }
+    const digest = String(asset?.digest ?? '').trim();
+    const sha256 = (/^sha256:([0-9a-f]{64})$/i.exec(digest) || [])[1]?.toLowerCase() || '';
+    if (!sha256) ctx.logger.warn('Breeze 发行包缺少官方 SHA256 摘要，安装会在解包前被拒绝', { version: data?.tag_name });
+    const value: Release = {
+      version: String(data?.tag_name ?? '').replace(/^v/i, '') || versionOf(asset.name),
+      assetName: String(asset.name),
+      assetUrl: String(asset.browser_download_url),
+      sha256,
+    };
+    releaseCache = { at: Date.now(), value };
+    return value;
   };
 
   const findBinary = async (cfg: Resolved) => {
@@ -459,7 +468,18 @@ export function apply(ctx: Context) {
     }
   };
 
-  const extractZip = async (zip: string, target: string, signal: AbortSignal) => {
+  const extractZip = async (zip: string, target: string, signal: AbortSignal, release: Release, label: string) => {
+    setDeployProgress('binary', `校验 ${label} SHA256…`);
+    try {
+      await verifyFileSha256(zip, release.sha256, label);
+    } catch (e) {
+      try {
+        await unlink(zip);
+      } catch {
+        /* 删除损坏包失败时保留原文件，下次仍会重新校验 */
+      }
+      throw e;
+    }
     await mkdir(target, { recursive: true });
     const result = await runProcess('C:\\Windows\\System32\\tar.exe', ['-xf', zip, '-C', target], {
       signal,
@@ -489,7 +509,7 @@ export function apply(ctx: Context) {
     }
     setDeployProgress('binary', '解压运行包…');
     const binRoot = join(BREEZE_ROOT, 'bin');
-    await extractZip(zip, binRoot, signal);
+    await extractZip(zip, binRoot, signal, release, `Breeze v${release.version} 运行包`);
     const expected = join(binRoot, release.assetName.replace(/\.zip$/i, ''), 'breeze-server.exe');
     if ((await sizeOf(expected)) > 1_000_000) return expected;
     const again = await findBinary({ ...cfg, breezeExe: expected });
@@ -508,7 +528,7 @@ export function apply(ctx: Context) {
       await downloadFile(release.assetUrl, zip, signal, 'binary', `Breeze v${release.version} 运行包`);
     }
     setDeployProgress('binary', `解压 Breeze v${release.version} 运行包…`);
-    await extractZip(zip, binRoot, signal);
+    await extractZip(zip, binRoot, signal, release, `Breeze v${release.version} 运行包`);
     if ((await sizeOf(expected)) < 1_000_000) throw new Error('更新包解压后没有找到 breeze-server.exe。');
     return expected;
   };
@@ -575,7 +595,10 @@ export function apply(ctx: Context) {
         await mkdir(voicesDir, { recursive: true });
         const next = await saveCfg({ breezeExe: exe, breezeModel: model, voicesDir });
         deployState.version = versionOf(exe);
-        if (mode === 'update' || exe !== cfg.breezeExe || model !== cfg.breezeModel) await stopBreeze();
+        if (mode === 'update' || exe !== cfg.breezeExe || model !== cfg.breezeModel) {
+          const stop = await stopBreeze(cfg);
+          if (stop.skipped) ctx.logger.warn('有 Breeze 进程无法确认归属，未强制结束', { skipped: stop.skipped });
+        }
         setDeployProgress('start', mode === 'update' ? '重启本机语音服务……' : '启动本机语音服务……');
         const boot = await ensureBreeze(next, ac.signal);
         if (!boot.ready) throw new Error('Breeze 已启动，但 90 秒内没就绪；可能是显卡被占用或模型文件不完整。');
