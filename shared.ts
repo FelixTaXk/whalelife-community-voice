@@ -625,9 +625,9 @@ const waitForExit = async (owner: BreezeOwner, ms: number) => {
  * 只停止本实例登记过、且仍能核对上可执行文件与命令行归属的 Breeze。
  * 不按进程名批量结束，避免同一台机器上的另一个实例被误杀。
  */
-export async function stopBreeze(cfg?: Resolved) {
-  const key = cfg ? breezeOwnerKey(cfg) : '';
-  const targets = [...breezeOwners.entries()].filter(([k]) => !cfg || k === key);
+export async function stopBreeze(cfg: Resolved) {
+  const key = breezeOwnerKey(cfg);
+  const targets = [...breezeOwners.entries()].filter(([k]) => k === key);
   let stopped = 0;
   let skipped = 0;
   for (const [ownerKey, owner] of targets) {
