@@ -1,4 +1,4 @@
-/*! 说话子插件：本机 Breeze / 网络 OpenAI 兼容 TTS 合成 + 音色库 + 本机扬声器播放。 */
+/*! 说话子插件：本机 Breeze / 本机 OpenAI 兼容 / 网络 TTS 合成 + 音色库 + 本机扬声器播放。 */
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
@@ -82,16 +82,31 @@ async function libraryView(ctx: Context, cfg: Resolved, signal?: AbortSignal): P
         voices: merged, note,
       };
     }
-    const online = await healthy(cfg.baseUrl);
+    const breeze = cfg.localMode === 'breeze';
+    let online = false;
+    try {
+      if (breeze) online = await healthy(cfg.baseUrl);
+      else {
+        const res = await fetch(`${apiBase(cfg.baseUrl)}/models`, { signal: AbortSignal.timeout(6000) });
+        online = res.status < 500;
+      }
+    } catch {
+      online = false;
+    }
     const found = await serverVoices(t, signal);
-    const files = found === null ? await fileVoices(cfg) : [];
+    const files = found === null && breeze ? await fileVoices(cfg) : [];
     const voices = found ?? files;
     return {
       engine: 'local', model: t.name, endpoint: t.base, online, status: null,
       defaultVoice: cfg.voice,
-      capabilities: { list: true, design: true, clone: true, delete: true, add: false },
+      capabilities: breeze
+        ? { list: true, design: true, clone: true, delete: true, add: false }
+        : { list: true, design: false, clone: found !== null, delete: found !== null, add: false },
       voices,
-      note: online ? '引擎已就绪。' : '引擎还没起，生成时会自动拉起；也可以点“测试连接”手动启动。',
+      note: breeze
+        ? (online ? 'Breeze 已就绪。' : (cfg.breezeAutoStart ? 'Breeze 还没起，生成时会自动拉起；也可以点“测试连接”手动启动。' : 'Breeze 还没起，自动启动已关闭。'))
+        : (online ? '本机 OpenAI 兼容服务已连通。' : '本机 OpenAI 兼容服务连不上，检查地址和服务状态。') +
+          (found === null ? ' 这个服务没有 /v1/voices 接口，音色 id 直接填服务里已有的。' : ''),
     };
   } catch (e: any) {
     const manual = cfg.cloudVoices.map((id) => ({ id, seconds: 0, description: '', saved: true, source: '手动' }));
@@ -119,7 +134,7 @@ async function deleteVoice(ctx: Context, cfg: Resolved, name: string): Promise<{
     serverDeleted = false;
   }
   let fileDeleted = false;
-  if (t.kind === 'local' && VOICE_NAME.test(name)) {
+  if (t.kind === 'local' && cfg.localMode === 'breeze' && VOICE_NAME.test(name)) {
     const dir = resolve(cfg.voicesDir);
     const file = resolve(join(dir, `${name}.breeze`));
     if (file.startsWith(dir + sep)) {
@@ -172,7 +187,7 @@ export function apply(ctx: Context) {
         const wantPlay = args.play === undefined ? cfg.play : Boolean(args.play);
         if (wantPlay) {
           ctx.signal.throwIfAborted();
-          await speakFile(file);
+          await speakFile(file, cfg);
         }
         return {
           status: 'ok', file, bytes: bytes.length, played: wantPlay,
@@ -187,7 +202,7 @@ export function apply(ctx: Context) {
   ctx.tools.register({
     name: 'qq_say',
     description:
-      '把这句话合成语音，然后作为一条语音私聊发给 QQ 白名单里的好友（哥哥/姐姐）。' +
+      '把这句话合成语音，然后作为一条语音私聊发给 QQ 白名单里的好友。' +
       '本机和网络模型都能发；只有对方在私聊白名单内才发得出去；一次不超过四百字，太长就拆句。QQ 不发语音时改用 qq_send_message 发文字。',
     danger: 'ask',
     schema: {
@@ -269,7 +284,8 @@ export function apply(ctx: Context) {
       const cfg = await readCfg();
       const name = String(args.name ?? '').trim();
       if (!name) return { status: 'error', error: '没选音色。' };
-      if (cfg.engine === 'local' && !VOICE_NAME.test(name)) return { status: 'error', error: '本机音色名只能字母、数字、- 和 _。' };
+      if (cfg.engine === 'local' && cfg.localMode === 'breeze' && !VOICE_NAME.test(name)) return { status: 'error', error: '本机 Breeze 音色名只能字母、数字、- 和 _。' };
+      if (cfg.engine === 'local' && cfg.localMode === 'openai' && !CLOUD_VOICE.test(name)) return { status: 'error', error: '本机音色 id 不合法。' };
       try {
         const lib = await libraryView(ctx, cfg);
         if (!lib.voices.some((v) => v.id === name))
@@ -293,7 +309,7 @@ export function apply(ctx: Context) {
     schema: {
       type: 'object',
       properties: {
-        name: { type: 'string', minLength: 1, description: '音色名，字母/数字/-/_，最多 64 位，例如 xiaochi_soft。' },
+        name: { type: 'string', minLength: 1, description: '音色名，字母/数字/-/_，最多 64 位，例如 narration。' },
         description: { type: 'string', minLength: 1, description: '音色描述（中文），越具体越像。' },
         sampleText: { type: 'string', description: '用来定音色的试音文本，默认一句自我介绍。' },
         setDefault: { type: 'boolean', description: '是否设为默认音色，默认 false。' },
@@ -308,7 +324,7 @@ export function apply(ctx: Context) {
       if (!VOICE_NAME.test(name)) return { status: 'error', error: '音色名只能字母、数字、- 和 _，最多 64 字。' };
       const description = String(args.description ?? '').trim();
       if (!description) return { status: 'error', error: '需要一段音色描述。' };
-      const sampleText = String(args.sampleText ?? '').trim() || '你好，我是周小迟。今天难得有空，想跟你说几句话。';
+      const sampleText = String(args.sampleText ?? '').trim() || '你好，这是一段用来试听音色的示例文本。';
       try {
         const { wav } = await designSample(ctx, cfg, description, sampleText, signal);
         const saved = await saveVoice(ctx, cfg, { name, description, refText: sampleText, wav }, signal);
@@ -515,7 +531,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
   <div id="designBox">
     <h3>按描述造一个新音色</h3>
     <div class="grid">
-      <label>音色名<input id="cname" placeholder="xiaochi_soft"></label>
+      <label>音色名<input id="cname" placeholder="narration"></label>
       <label>声音描述<input id="cdesc" placeholder="二十五岁左右女声，偏软，语速慢"></label>
       <label class="wide">试音文本（可留空）<input id="ctext" placeholder="默认一句自我介绍"></label>
       <label class="wide" style="display:flex;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="cdefault">顺手设为默认音色</label>
@@ -537,9 +553,9 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
 <section class="card">
   <details><summary>高级：本机引擎路径与显存</summary>
     <div class="grid">
-      <label class="wide">breeze-server.exe<input type="text" id="breezeExe" value="${esc(cfg.breezeExe)}"></label>
-      <label class="wide">模型 gguf<input type="text" id="breezeModel" value="${esc(cfg.breezeModel)}"></label>
-      <label class="wide">voices 目录<input type="text" id="voicesDir" value="${esc(cfg.voicesDir)}"></label>
+      <label class="wide">Breeze 可执行文件<input type="text" id="breezeExe" value="${esc(cfg.breezeExe)}"></label>
+      <label class="wide">Breeze 模型文件<input type="text" id="breezeModel" value="${esc(cfg.breezeModel)}"></label>
+      <label class="wide">音色目录<input type="text" id="voicesDir" value="${esc(cfg.voicesDir)}"></label>
       <label>单句上限字数<input type="number" id="maxChars" value="${cfg.maxChars}"></label>
       <label style="display:flex;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="play" ${cfg.play ? 'checked' : ''}>默认在本机扬声器播放</label>
     </div>
@@ -720,8 +736,20 @@ focusVoiceGen();
   ctx.web.api('/plugins/voice/speak/test', async (_req, res) => {
     const cfg = await readCfg();
     if (cfg.engine === 'local') {
-      const up = await ensureBreeze(cfg, AbortSignal.timeout(120_000)).then((r) => r.ready).catch(() => false);
-      sendJson(res, 200, { ok: true, engine: 'local', online: up, baseUrl: cfg.baseUrl, voice: cfg.voice });
+      if (cfg.localMode === 'breeze') {
+        const up = cfg.breezeAutoStart
+          ? await ensureBreeze(cfg, AbortSignal.timeout(120_000)).then((r) => r.ready).catch(() => false)
+          : await healthy(cfg.baseUrl);
+        sendJson(res, 200, { ok: true, engine: 'local', localMode: 'breeze', online: up, baseUrl: cfg.baseUrl, voice: cfg.voice });
+      } else {
+        try {
+          const t = targetOf(ctx, cfg);
+          const r = await fetch(`${apiBase(t.base)}/models`, { signal: AbortSignal.timeout(8000) });
+          sendJson(res, 200, { ok: true, engine: 'local', localMode: 'openai', online: true, status: r.status, model: t.name, baseUrl: t.base });
+        } catch (e: any) {
+          sendJson(res, 200, { ok: false, engine: 'local', localMode: 'openai', online: false, error: String(e?.message ?? e) });
+        }
+      }
       return;
     }
     try {
@@ -749,16 +777,17 @@ focusVoiceGen();
       const cfg = await readCfg();
       const name = String(body?.name ?? '').trim();
       if (!name) throw new Error('没选要试听的音色。');
-      if (cfg.engine === 'local' && !VOICE_NAME.test(name)) throw new Error('本机音色名只能字母、数字、- 和 _。');
+      if (cfg.engine === 'local' && cfg.localMode === 'breeze' && !VOICE_NAME.test(name)) throw new Error('本机 Breeze 音色名只能字母、数字、- 和 _。');
       if (cfg.engine === 'cloud' && !CLOUD_VOICE.test(name)) throw new Error('网络音色 id 不合法。');
-      const text = (String(body?.text ?? '').trim() || '你好，我是周小迟。今天想用这个声音，和你说几句话。').slice(0, 200);
+      if (cfg.engine === 'local' && cfg.localMode === 'openai' && !CLOUD_VOICE.test(name)) throw new Error('本机音色 id 不合法。');
+      const text = (String(body?.text ?? '').trim() || '你好，这是一段用来试听音色的示例文本。').slice(0, 200);
       const limit = Math.min(cfg.maxChars, 200);
       if (Array.from(text).length > limit) throw new Error(`试听文本最多 ${limit} 字。`);
       const out = await synth(ctx, cfg, text, name, signal);
       await mkdir(ROOT, { recursive: true });
       const file = join(ROOT, `preview-${createHash('sha1').update(name).digest('hex').slice(0, 12)}.wav`);
       await writeFile(file, out.bytes);
-      if (body?.play === true) await speakFile(file);
+      if (body?.play === true) await speakFile(file, cfg);
       sendJson(res, 200, {
         ok: true, voice: out.voice, bytes: out.bytes.length, engine: out.target.kind,
         model: out.target.name, engineStarted: out.started, text, file,
@@ -825,7 +854,7 @@ focusVoiceGen();
       const cfg = await readCfg();
       const name = String(body?.name ?? '').trim();
       const description = String(body?.description ?? '').trim();
-      const sampleText = String(body?.sampleText ?? '').trim() || '你好，我是周小迟。今天难得有空，想跟你说几句话。';
+      const sampleText = String(body?.sampleText ?? '').trim() || '你好，这是一段用来试听音色的示例文本。';
       if (!VOICE_NAME.test(name)) throw new Error('音色名只能字母、数字、- 和 _。');
       if (!description) throw new Error('需要一段音色描述。');
       const { wav } = await designSample(ctx, cfg, description, sampleText, signal);

@@ -3,47 +3,35 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Context } from '../../core/context.ts';
 
-const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const WIN = process.platform === 'win32';
+const WIN_SYSTEM_ROOT = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+const WIN_POWERSHELL = join(WIN_SYSTEM_ROOT, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
 export const PLUGIN_ROOT = fileURLToPath(new URL('.', import.meta.url));
 export const DATA_ROOT = join(PLUGIN_ROOT, 'data');
 export const BREEZE_ROOT = join(DATA_ROOT, 'breeze');
 export const BREEZE_MODEL_FILE = 'breeze-tts-2-q8_0.gguf';
-export const HIVE_BIN = join(BREEZE_ROOT, 'bin', 'breeze-server.exe');
+export const BREEZE_BINARY = WIN ? 'breeze-server.exe' : 'breeze-server';
+export const HIVE_BIN = join(BREEZE_ROOT, 'bin', BREEZE_BINARY);
 export const HIVE_MODEL = join(BREEZE_ROOT, 'models', BREEZE_MODEL_FILE);
 export const HIVE_VOICES = join(BREEZE_ROOT, 'voices');
-
-const LEGACY_SING_ROOT = 'D:\\AI\\seed-vc';
-const SING_ROOT = process.env.WHALELIFE_SING_ROOT
-  || (existsSync(join(LEGACY_SING_ROOT, '.venv')) ? LEGACY_SING_ROOT : join(DATA_ROOT, 'seed-vc'));
-const LEGACY_FFMPEG = 'D:\\dafeiyu\\ffmpeg\\bin\\ffmpeg.exe';
-const FFMPEG = process.env.WHALELIFE_FFMPEG || (existsSync(LEGACY_FFMPEG) ? LEGACY_FFMPEG : 'ffmpeg');
-const LEGACY_COMFY_SITE = 'D:\\ComfyUI\\venv\\Lib\\site-packages';
-const COMFY_SITE = process.env.WHALELIFE_COMFY_SITE || (existsSync(LEGACY_COMFY_SITE) ? LEGACY_COMFY_SITE : '');
-
-export const SING = {
-  python: process.env.WHALELIFE_SING_PYTHON || join(SING_ROOT, '.venv', 'Scripts', 'python.exe'),
-  runner: process.env.WHALELIFE_SING_RUNNER || join(SING_ROOT, 'run_seedvc.py'),
-  cwd: SING_ROOT,
-  refs: process.env.WHALELIFE_SING_REFS || join(SING_ROOT, 'refs'),
-  defaultRef: 'xiaochi_breeze_ref.wav',
-  input: process.env.WHALELIFE_SING_INPUT || join(SING_ROOT, 'input'),
-  output: process.env.WHALELIFE_SING_OUTPUT || join(SING_ROOT, 'output', 'whalelife'),
-  ffmpeg: FFMPEG,
-  comfySite: COMFY_SITE,
-};
 
 export const VOICE_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 export const CLOUD_VOICE = /^[A-Za-z0-9._:/-]{1,160}$/;
 
 export type Engine = 'local' | 'cloud';
+export type LocalMode = 'breeze' | 'openai';
+export type PlayerMode = 'auto' | 'powershell' | 'afplay' | 'ffplay' | 'aplay' | 'none';
 
 export type Cfg = {
   engine?: Engine;
+  localMode?: LocalMode;
   baseUrl?: string;
+  localModel?: string;
   voice?: string;
   modelId?: string;
   cloudVoice?: string;
@@ -52,13 +40,24 @@ export type Cfg = {
   breezeExe?: string;
   breezeModel?: string;
   voicesDir?: string;
+  breezeAutoStart?: boolean;
+  breezeRepo?: string;
+  breezeAssetPattern?: string;
+  breezeModelUrl?: string;
+  breezeModelFile?: string;
+  player?: PlayerMode;
+  playerPath?: string;
+  curlPath?: string;
+  tarPath?: string;
   play?: boolean;
   maxChars?: number;
 };
 
 export type Resolved = {
   engine: Engine;
+  localMode: LocalMode;
   baseUrl: string;
+  localModel: string;
   voice: string;
   modelId: string;
   cloudVoice: string;
@@ -67,21 +66,41 @@ export type Resolved = {
   breezeExe: string;
   breezeModel: string;
   voicesDir: string;
+  breezeAutoStart: boolean;
+  breezeRepo: string;
+  breezeAssetPattern: string;
+  breezeModelUrl: string;
+  breezeModelFile: string;
+  player: PlayerMode;
+  playerPath: string;
+  curlPath: string;
+  tarPath: string;
   play: boolean;
   maxChars: number;
 };
 
 export const DEFAULTS: Resolved = {
   engine: 'local',
+  localMode: 'breeze',
   baseUrl: 'http://127.0.0.1:8139',
-  voice: 'xiaochi_soft',
+  localModel: 'tts-1',
+  voice: '',
   modelId: '',
   cloudVoice: '',
   cloudVoices: [],
-  comfyUrl: 'http://127.0.0.1:8188',
+  comfyUrl: '',
   breezeExe: HIVE_BIN,
   breezeModel: HIVE_MODEL,
   voicesDir: HIVE_VOICES,
+  breezeAutoStart: true,
+  breezeRepo: 'HoppouAI/Breeze-TTS-2.cpp',
+  breezeAssetPattern: 'windows-x64-vulkan.zip',
+  breezeModelUrl: 'https://huggingface.co/HoppouAI/Breeze-TTS-2.cpp/resolve/main/breeze-tts-2-q8_0.gguf?download=true',
+  breezeModelFile: BREEZE_MODEL_FILE,
+  player: 'auto',
+  playerPath: '',
+  curlPath: '',
+  tarPath: '',
   play: true,
   maxChars: 400,
 };
@@ -117,19 +136,33 @@ export const esc = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replac
 export function normalize(stored: Cfg | null): Resolved {
   const s = stored ?? {};
   const maxChars = Number(s.maxChars);
+  const player = ['auto', 'powershell', 'afplay', 'ffplay', 'aplay', 'none'].includes(String(s.player))
+    ? String(s.player) as PlayerMode
+    : DEFAULTS.player;
   return {
     engine: s.engine === 'cloud' ? 'cloud' : 'local',
+    localMode: s.localMode === 'openai' ? 'openai' : 'breeze',
     baseUrl: String(s.baseUrl || DEFAULTS.baseUrl).replace(/\/$/, ''),
-    voice: String(s.voice || DEFAULTS.voice),
+    localModel: String(s.localModel || DEFAULTS.localModel),
+    voice: String(s.voice || ''),
     modelId: String(s.modelId || ''),
     cloudVoice: String(s.cloudVoice || ''),
     cloudVoices: Array.isArray(s.cloudVoices)
       ? s.cloudVoices.map((x) => String(x)).filter((x) => CLOUD_VOICE.test(x)).slice(0, 200)
       : [],
-    comfyUrl: String(s.comfyUrl || DEFAULTS.comfyUrl).replace(/\/$/, ''),
+    comfyUrl: String(s.comfyUrl || '').replace(/\/$/, ''),
     breezeExe: String(s.breezeExe || DEFAULTS.breezeExe),
     breezeModel: String(s.breezeModel || DEFAULTS.breezeModel),
     voicesDir: String(s.voicesDir || DEFAULTS.voicesDir),
+    breezeAutoStart: s.breezeAutoStart !== false,
+    breezeRepo: String(s.breezeRepo || DEFAULTS.breezeRepo),
+    breezeAssetPattern: String(s.breezeAssetPattern || DEFAULTS.breezeAssetPattern),
+    breezeModelUrl: String(s.breezeModelUrl || DEFAULTS.breezeModelUrl),
+    breezeModelFile: String(s.breezeModelFile || DEFAULTS.breezeModelFile),
+    player,
+    playerPath: String(s.playerPath || ''),
+    curlPath: String(s.curlPath || ''),
+    tarPath: String(s.tarPath || ''),
     play: s.play !== false,
     maxChars: Number.isFinite(maxChars) && maxChars > 0 && maxChars <= 2000 ? Math.floor(maxChars) : DEFAULTS.maxChars,
   };
@@ -159,7 +192,15 @@ export function portOf(url: string) {
     if (u.port) return Number(u.port);
     return u.protocol === 'https:' ? 443 : 80;
   } catch {
-    return 8139;
+    return 0;
+  }
+}
+
+export function hostOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    return '127.0.0.1';
   }
 }
 
@@ -177,6 +218,7 @@ export async function healthy(base: string, ms = 3000) {
 }
 
 export async function freeComfy(url: string) {
+  if (!url) return false;
   try {
     await fetch(`${rootBase(url)}/free`, {
       method: 'POST',
@@ -216,7 +258,10 @@ const normalizeProcessPath = (value: string) => {
 };
 
 const processMatchesOwner = (info: ProcessInfo, owner: BreezeOwner) => {
-  if (!normalizeProcessPath(info.executablePath) || normalizeProcessPath(info.executablePath) !== normalizeProcessPath(owner.exe)) return false;
+  const actual = normalizeProcessPath(info.executablePath);
+  const expected = normalizeProcessPath(owner.exe);
+  const sameExe = Boolean(actual && expected && (actual === expected || (!WIN && basename(actual) === basename(expected))));
+  if (!sameExe) return false;
   const command = String(info.commandLine || '').toLowerCase();
   if (!command) return false;
   const model = String(owner.model || '').toLowerCase();
@@ -228,7 +273,10 @@ const processMatchesOwner = (info: ProcessInfo, owner: BreezeOwner) => {
 };
 
 export function spawnBreeze(cfg: Resolved) {
-  const child = spawn(cfg.breezeExe, [cfg.breezeModel, '--host', '127.0.0.1', '--port', String(portOf(cfg.baseUrl)),
+  const port = portOf(cfg.baseUrl);
+  if (!port) throw new Error('本机 Breeze 地址缺少端口，无法启动。');
+  const host = hostOf(cfg.baseUrl);
+  const child = spawn(cfg.breezeExe, [cfg.breezeModel, '--host', host, '--port', String(port),
     '--voices-dir', cfg.voicesDir, '--ws-port', '-1'], {
     detached: true, windowsHide: true, stdio: 'ignore',
   });
@@ -252,9 +300,18 @@ export function spawnBreeze(cfg: Resolved) {
   return owner;
 }
 
+export async function openAIReachable(base: string) {
+  try {
+    const res = await fetch(`${apiBase(base)}/models`, { signal: AbortSignal.timeout(6000) });
+    return res.status < 500;
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureBreeze(cfg: Resolved, signal: AbortSignal) {
   if (await healthy(cfg.baseUrl)) return { ready: true, started: false };
-  if (!isLoopback(cfg.baseUrl)) return { ready: true, started: false };
+  if (!cfg.breezeAutoStart || !isLoopback(cfg.baseUrl)) return { ready: false, started: false };
   await freeComfy(cfg.comfyUrl);
   try {
     spawnBreeze(cfg);
@@ -269,12 +326,34 @@ export async function ensureBreeze(cfg: Resolved, signal: AbortSignal) {
   return { ready: false, started: true };
 }
 
-export async function speakFile(path: string) {
-  const child = spawn(PS, ['-NoProfile', '-NonInteractive', '-Command',
-    `$p = New-Object Media.SoundPlayer '${path}'; $p.PlaySync()`], {
+function playerCommand(cfg?: Resolved) {
+  const mode = cfg?.player || (WIN ? 'powershell' : 'auto');
+  if (mode === 'none') return null;
+  if (cfg?.playerPath) return { exe: cfg.playerPath, mode };
+  if (mode === 'powershell' || (mode === 'auto' && WIN && existsSync(WIN_POWERSHELL))) {
+    return { exe: existsSync(WIN_POWERSHELL) ? WIN_POWERSHELL : 'powershell.exe', mode: 'powershell' as PlayerMode };
+  }
+  if (mode === 'afplay' || (mode === 'auto' && process.platform === 'darwin')) {
+    return { exe: 'afplay', mode: 'afplay' as PlayerMode };
+  }
+  if (mode === 'aplay') return { exe: 'aplay', mode: 'aplay' as PlayerMode };
+  return { exe: 'ffplay', mode: 'ffplay' as PlayerMode };
+}
+
+export async function speakFile(path: string, cfg?: Resolved) {
+  const command = playerCommand(cfg);
+  if (!command) return false;
+  const escaped = path.replace(/'/g, "''");
+  const args = command.mode === 'powershell'
+    ? ['-NoProfile', '-NonInteractive', '-Command', `$p = New-Object Media.SoundPlayer '${escaped}'; $p.PlaySync()`]
+    : command.mode === 'ffplay'
+      ? ['-nodisp', '-autoexit', '-loglevel', 'error', path]
+      : [path];
+  const child = spawn(command.exe, args, {
     detached: true, windowsHide: true, stdio: 'ignore',
   });
   child.unref();
+  return true;
 }
 
 export function pcmToWav(pcm: Buffer, rate: number) {
@@ -383,7 +462,14 @@ export function targetOf(ctx: Context, cfg: Resolved): Target {
       throw new Error(`这个模型的协议是 ${c.protocol}，暂时只支持 OpenAI 兼容的语音合成模型。`);
     return { kind: 'cloud', base: c.base_url.replace(/\/$/, ''), key: c.api_key || '', model: c.model, name: c.name };
   }
-  return { kind: 'local', base: cfg.baseUrl.replace(/\/$/, ''), key: '', model: 'breeze', name: '本机 Breeze' };
+  const breeze = cfg.localMode === 'breeze';
+  return {
+    kind: 'local',
+    base: cfg.baseUrl.replace(/\/$/, ''),
+    key: '',
+    model: breeze ? 'breeze' : (cfg.localModel || 'tts-1'),
+    name: breeze ? 'Breeze' : `本机 OpenAI 兼容 · ${cfg.localModel || 'tts-1'}`,
+  };
 }
 
 export async function requestSpeech(t: Target, text: string, voice: string, signal: AbortSignal, timeout = 180_000) {
@@ -415,15 +501,22 @@ export async function readError(res: Response, prefix: string) {
 export async function synth(ctx: Context, cfg: Resolved, text: string, voice: string | undefined, signal: AbortSignal) {
   const t = targetOf(ctx, cfg);
   if (t.kind === 'local') {
-    const boot = await ensureBreeze(cfg, signal);
-    if (!boot.ready) throw new Error('Breeze 没起来（可能显卡被占用），这句先说文字。');
+    const breeze = cfg.localMode === 'breeze';
+    const boot = breeze ? await ensureBreeze(cfg, signal) : { ready: await openAIReachable(cfg.baseUrl), started: false };
+    if (!boot.ready) throw new Error(breeze
+      ? 'Breeze 没起来（可能显卡被占用，或自动启动已关闭），这句先说文字。'
+      : '本机 OpenAI 兼容语音服务没连上，检查地址和服务状态。');
     const chosen = voice || cfg.voice;
     if (!chosen) throw new Error('还没有默认音色，先到设置页的音色库里选一个。');
     const res = await requestSpeech(t, text, chosen, signal);
     if (!res.ok) throw new Error(await readError(res, '合成失败'));
     const bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.length < 44) throw new Error('合成结果为空。');
-    return { bytes: loudenWav(normalizeWav(bytes)), started: boot.started, voice: chosen, target: t };
+    const rate = Number(res.headers.get('x-sample-rate') || 24_000);
+    return {
+      bytes: loudenWav(normalizeWav(audioFrom(bytes, String(res.headers.get('content-type') || ''), rate))),
+      started: boot.started, voice: chosen, target: t,
+    };
   }
 
   const chosen = voice || cfg.cloudVoice || cfg.cloudVoices[0] || '';
@@ -444,6 +537,7 @@ export async function synth(ctx: Context, cfg: Resolved, text: string, voice: st
 }
 
 export async function designSample(ctx: Context, cfg: Resolved, instruction: string, text: string, signal: AbortSignal) {
+  if (cfg.localMode !== 'breeze') throw new Error('当前本机引擎不是 Breeze，不支持按描述生成音色；可以改用服务自带音色或参考音频克隆。');
   const t = targetOf(ctx, cfg);
   if (t.kind !== 'local') throw new Error('网络语音模型不支持按描述造音色；可以试试参考音频克隆，或直接用服务商自带的音色。');
   const boot = await ensureBreeze(cfg, signal);
@@ -473,6 +567,7 @@ export async function saveVoice(
   if (!VOICE_NAME.test(input.name)) throw new Error('本机音色名只能字母、数字、- 和 _，最多 64 字。');
   const t = targetOf(ctx, cfg);
   if (t.kind === 'local') {
+    if (cfg.localMode !== 'breeze') throw new Error('当前本机引擎不是 Breeze，不能把音色存成 .breeze 文件；请用服务自带音色或服务端音色接口。');
     const boot = await ensureBreeze(cfg, signal);
     if (!boot.ready) throw new Error('Breeze 没起来，暂时存不了音色。');
   }
@@ -497,21 +592,21 @@ export async function saveVoice(
 }
 
 export async function ensureDefaultVoice(ctx: Context, cfg: Resolved, signal: AbortSignal) {
-  if (cfg.engine !== 'local') throw new Error('只有本机语音模型需要自动准备音色。');
+  if (cfg.engine !== 'local' || cfg.localMode !== 'breeze') throw new Error('只有本机 Breeze 引擎需要自动准备音色。');
   let existing: string[] = [];
   try {
     existing = (await readdir(cfg.voicesDir)).filter((n) => n.toLowerCase().endsWith('.breeze'));
   } catch {
     /* 目录还没建 */
   }
-  const wanted = VOICE_NAME.test(cfg.voice) ? cfg.voice : 'xiaochi_soft';
+  const wanted = VOICE_NAME.test(cfg.voice) ? cfg.voice : 'default';
   if (existing.some((n) => n.slice(0, -7) === wanted)) return { created: false, voice: wanted, adopted: false };
   if (existing.length) {
     const first = existing[0].slice(0, -7);
     if (VOICE_NAME.test(first)) return { created: false, voice: first, adopted: true };
   }
-  const instruction = '年轻女性，声音清亮偏软，语速偏慢，温柔自然，普通话标准，轻微气声，像深夜电台主持。';
-  const sampleText = '你好，我是周小迟。夜里睡不着的话，就和我说说话吧。';
+  const instruction = '自然、清晰、语速适中的通用中文旁白音色，适合日常朗读。';
+  const sampleText = '你好，这是一段默认音色的试听。';
   const sample = await designSample(ctx, cfg, instruction, sampleText, signal);
   await saveVoice(ctx, cfg, { name: wanted, description: instruction, refText: sampleText, wav: sample.wav }, signal);
   return { created: true, voice: wanted, adopted: false, seconds: Math.round(sample.wav.length / 48_000) };
@@ -596,15 +691,23 @@ export function runProcess(
 
 const processInfo = async (pid: number): Promise<ProcessInfo | null> => {
   try {
-    const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue; if ($p) { [pscustomobject]@{ ExecutablePath = [string]$p.ExecutablePath; CommandLine = [string]$p.CommandLine } | ConvertTo-Json -Compress }`;
-    const result = await runProcess(PS, ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 8_000 });
-    const stdout = result.stdout.replace(/^\uFEFF/, '').trim();
+    if (WIN) {
+      const exe = existsSync(WIN_POWERSHELL) ? WIN_POWERSHELL : 'powershell.exe';
+      const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue; if ($p) { [pscustomobject]@{ ExecutablePath = [string]$p.ExecutablePath; CommandLine = [string]$p.CommandLine } | ConvertTo-Json -Compress }`;
+      const result = await runProcess(exe, ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 8_000 });
+      const stdout = result.stdout.replace(/^\uFEFF/, '').trim();
+      if (result.code !== 0 || !stdout) return null;
+      const value = JSON.parse(stdout);
+      return {
+        executablePath: String(value?.ExecutablePath ?? ''),
+        commandLine: String(value?.CommandLine ?? ''),
+      };
+    }
+    const result = await runProcess('ps', ['-p', String(pid), '-o', 'comm=,args='], { timeout: 8_000 });
+    const stdout = result.stdout.trim();
     if (result.code !== 0 || !stdout) return null;
-    const value = JSON.parse(stdout);
-    return {
-      executablePath: String(value?.ExecutablePath ?? ''),
-      commandLine: String(value?.CommandLine ?? ''),
-    };
+    const line = stdout.split(/\r?\n/)[0].trim();
+    return { executablePath: line.split(/\s+/)[0] || '', commandLine: line };
   } catch {
     return null;
   }
@@ -651,7 +754,8 @@ export async function stopBreeze(cfg: Resolved) {
       const again = await processInfo(owner.pid);
       if (again && processMatchesOwner(again, owner)) {
         try {
-          await runProcess('C:\\Windows\\System32\\taskkill.exe', ['/PID', String(owner.pid), '/F'], { timeout: 15_000 });
+          if (WIN) await runProcess('taskkill', ['/PID', String(owner.pid), '/F'], { timeout: 15_000 });
+          else process.kill(owner.pid, 'SIGKILL');
         } catch {
           /* 结束失败时保留登记，交给下次重试 */
           continue;

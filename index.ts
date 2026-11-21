@@ -8,9 +8,9 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Context } from '../../core/context.ts';
 import {
-  apiBase, authHeaders, BREEZE_MODEL_FILE, BREEZE_ROOT, DATA_ROOT, DEFAULTS, ensureBreeze,
-  ensureDefaultVoice as ensureDefaultVoiceCore, esc, healthy, HIVE_MODEL, HIVE_VOICES, isInside,
-  isLoopback, normalize, PLUGIN_ROOT, rootBase, runProcess, stopBreeze, synth, verifyFileSha256,
+  apiBase, authHeaders, BREEZE_BINARY, BREEZE_ROOT, DATA_ROOT, DEFAULTS, ensureBreeze,
+  ensureDefaultVoice as ensureDefaultVoiceCore, esc, healthy, HIVE_VOICES, isInside,
+  isLoopback, normalize, PLUGIN_ROOT, rootBase, runProcess, stopBreeze, synth, targetOf, verifyFileSha256,
   type Cfg, type Resolved,
 } from './shared.ts';
 
@@ -31,7 +31,12 @@ export function apply(ctx: Context) {
   };
 
   const modelInfo = (cfg: Resolved) => {
-    if (cfg.engine === 'local') return { model: '本机 Breeze', endpoint: cfg.baseUrl };
+    if (cfg.engine === 'local') {
+      return {
+        model: cfg.localMode === 'breeze' ? 'Breeze' : `本机 OpenAI 兼容 · ${cfg.localModel}`,
+        endpoint: cfg.baseUrl,
+      };
+    }
     if (!cfg.modelId) return { model: '', endpoint: '' };
     try {
       const conn = ctx.models.connection(cfg.modelId);
@@ -50,8 +55,17 @@ export function apply(ctx: Context) {
       const cfg = await readCfg();
       const info = modelInfo(cfg);
       let online = false;
-      if (cfg.engine === 'local') online = await healthy(cfg.baseUrl);
-      else if (cfg.modelId) {
+      if (cfg.engine === 'local') {
+        if (cfg.localMode === 'breeze') online = await healthy(cfg.baseUrl);
+        else {
+          try {
+            const res = await fetch(`${apiBase(cfg.baseUrl)}/models`, { signal: AbortSignal.timeout(6000) });
+            online = res.status < 500;
+          } catch {
+            online = false;
+          }
+        }
+      } else if (cfg.modelId) {
         try {
           const conn = ctx.models.connection(cfg.modelId);
           const res = await fetch(`${apiBase(conn.base_url)}/models`, {
@@ -74,7 +88,9 @@ export function apply(ctx: Context) {
           sing: ctx.tools.list().some((t: any) => t?.function?.name === 'voice_sing'),
         },
         note: cfg.engine === 'local'
-          ? (online ? '本机引擎已就绪。' : '本机引擎没起，说话时会自动拉起。')
+          ? (cfg.localMode === 'breeze'
+              ? (online ? 'Breeze 已就绪。' : (cfg.breezeAutoStart ? 'Breeze 没起，说话时会自动拉起。' : 'Breeze 没起，自动启动已关闭。'))
+              : (online ? '本机 OpenAI 兼容服务可连通。' : '本机 OpenAI 兼容服务连不上，检查地址和服务状态。'))
           : (online ? '网络模型可连通。' : '网络模型连不上，检查地址或密钥。'),
       };
     },
@@ -138,13 +154,6 @@ export function apply(ctx: Context) {
   type DeployStage = 'idle' | 'check' | 'binary' | 'model' | 'start' | 'voice' | 'done' | 'error' | 'cancelled';
   type Release = { version: string; assetName: string; assetUrl: string; sha256: string };
   const DEPLOY_DIR = join(DATA_ROOT, 'deploy');
-  const MODEL_URL = 'https://huggingface.co/HoppouAI/Breeze-TTS-2.cpp/resolve/main/breeze-tts-2-q8_0.gguf?download=true';
-  const FALLBACK_RELEASE: Release = {
-    version: '0.1.7',
-    assetName: 'breeze-tts-2-v0.1.7-windows-x64-vulkan.zip',
-    assetUrl: 'https://github.com/HoppouAI/Breeze-TTS-2.cpp/releases/download/v0.1.7/breeze-tts-2-v0.1.7-windows-x64-vulkan.zip',
-    sha256: '63fb117e5c6b04e33ac513d6ca80c621d01bdbdebcf7a8486f872d181ae3c88f',
-  };
   const deployState = {
     running: false,
     stage: 'idle' as DeployStage,
@@ -183,7 +192,7 @@ export function apply(ctx: Context) {
     }
   };
   const versionOf = (file: string) => {
-    const m = String(file ?? '').match(/breeze-tts-2-v(\d+\.\d+\.\d+)/i);
+    const m = String(file ?? '').match(/-v(\d+\.\d+\.\d+)/i);
     return m ? m[1] : '';
   };
   const compareVersion = (a: string, b: string) => {
@@ -203,25 +212,22 @@ export function apply(ctx: Context) {
     deployState.percent = total > 0 ? Math.min(99, Math.round((bytes / total) * 100)) : 0;
   };
 
-  const latestRelease = async (): Promise<Release> => {
+  const latestRelease = async (cfg: Resolved): Promise<Release> => {
     if (releaseCache && Date.now() - releaseCache.at < 10 * 60_000) return releaseCache.value;
     let data: any = null;
     try {
-      const res = await fetch('https://api.github.com/repos/HoppouAI/Breeze-TTS-2.cpp/releases/latest', {
+      const res = await fetch(`https://api.github.com/repos/${cfg.breezeRepo}/releases/latest`, {
         headers: { 'user-agent': 'WhaleLife voice deploy', accept: 'application/vnd.github+json' },
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       data = await res.json();
-    } catch {
-      /* 网络不可用时用固定版本兜底；兜底包也带官方摘要。 */
-      releaseCache = { at: Date.now(), value: FALLBACK_RELEASE };
-      return FALLBACK_RELEASE;
+    } catch (e: any) {
+      throw new Error(`无法从 ${cfg.breezeRepo} 获取 Breeze Release（${String(e?.message ?? e)}）。请检查网络，或在高级设置里改仓库和资产后缀。`);
     }
-    const asset = (data?.assets ?? []).find((a: any) => /windows-x64-vulkan\.zip$/i.test(String(a?.name ?? '')));
+    const asset = (data?.assets ?? []).find((a: any) => String(a?.name ?? '').toLowerCase().endsWith(cfg.breezeAssetPattern.toLowerCase()));
     if (!asset?.browser_download_url) {
-      releaseCache = { at: Date.now(), value: FALLBACK_RELEASE };
-      return FALLBACK_RELEASE;
+      throw new Error(`Release v${String(data?.tag_name ?? '').replace(/^v/i, '')} 里没有以 ${cfg.breezeAssetPattern} 结尾的资产。`);
     }
     const digest = String(asset?.digest ?? '').trim();
     const sha256 = (/^sha256:([0-9a-f]{64})$/i.exec(digest) || [])[1]?.toLowerCase() || '';
@@ -244,7 +250,7 @@ export function apply(ctx: Context) {
         .map((d) => d.name)
         .sort((a, b) => b.localeCompare(a));
       for (const dir of dirs) {
-        const exe = join(binRoot, dir, 'breeze-server.exe');
+        const exe = join(binRoot, dir, BREEZE_BINARY);
         if ((await sizeOf(exe)) > 1_000_000) return exe;
       }
     } catch {
@@ -256,7 +262,7 @@ export function apply(ctx: Context) {
 
   const findModel = async (cfg: Resolved) => {
     const modelRoot = join(BREEZE_ROOT, 'models');
-    const portable = join(modelRoot, BREEZE_MODEL_FILE);
+    const portable = join(modelRoot, basename(cfg.breezeModelFile || 'model.gguf'));
     if ((await sizeOf(portable)) > 100_000_000) return portable;
     if ((await sizeOf(cfg.breezeModel)) > 100_000_000) return cfg.breezeModel;
     try {
@@ -303,14 +309,14 @@ export function apply(ctx: Context) {
     const dstDir = join(BREEZE_ROOT, 'bin', basename(srcDir));
     setDeployProgress('binary', '把已有的 Breeze 迁移到插件目录……');
     await copyTree(srcDir, dstDir, signal);
-    const exe = join(dstDir, 'breeze-server.exe');
+    const exe = join(dstDir, BREEZE_BINARY);
     return (await sizeOf(exe)) > 1_000_000 ? exe : '';
   };
 
   const migrateModel = async (cfg: Resolved, signal: AbortSignal) => {
     const src = cfg.breezeModel;
     if ((await sizeOf(src)) < 100_000_000 || isInside(BREEZE_ROOT, src)) return '';
-    const dst = HIVE_MODEL;
+    const dst = join(BREEZE_ROOT, 'models', basename(cfg.breezeModelFile || 'model.gguf'));
     if ((await sizeOf(dst)) > 100_000_000) return dst;
     await mkdir(dirname(dst), { recursive: true });
     setDeployProgress('model', '把已有模型迁移到插件目录……');
@@ -356,6 +362,7 @@ export function apply(ctx: Context) {
   };
 
   const downloadWithCurl = async (
+    cfg: Resolved,
     url: string,
     dest: string,
     signal: AbortSignal,
@@ -367,7 +374,7 @@ export function apply(ctx: Context) {
     const have = await sizeOf(part);
     const args = [
       '--location', '--fail', '--silent', '--show-error',
-      '--ssl-no-revoke', '--retry', '3', '--retry-delay', '2',
+      '--retry', '3', '--retry-delay', '2',
       '--output', part,
     ];
     if (have > 0) args.push('--continue-at', '-');
@@ -375,7 +382,7 @@ export function apply(ctx: Context) {
     setDeployProgress(stage, `${label}：连接下载源…`, have, 0);
     await new Promise<void>((resolvePromise, rejectPromise) => {
       let stderr = '';
-      const child = spawn('C:\\Windows\\System32\\curl.exe', args, {
+      const child = spawn(cfg.curlPath || 'curl', args, {
         windowsHide: true,
         stdio: ['ignore', 'ignore', 'pipe'],
       });
@@ -418,6 +425,7 @@ export function apply(ctx: Context) {
   };
 
   const downloadFile = async (
+    cfg: Resolved,
     url: string,
     dest: string,
     signal: AbortSignal,
@@ -469,11 +477,11 @@ export function apply(ctx: Context) {
     } catch (e: any) {
       if (signal.aborted) throw e;
       ctx.logger.warn('fetch 下载失败，改用系统 curl 重试', { error: String(e?.message ?? e), url });
-      await downloadWithCurl(url, dest, signal, stage, label);
+      await downloadWithCurl(cfg, url, dest, signal, stage, label);
     }
   };
 
-  const extractZip = async (zip: string, target: string, signal: AbortSignal, release: Release, label: string) => {
+  const extractZip = async (cfg: Resolved, zip: string, target: string, signal: AbortSignal, release: Release, label: string) => {
     setDeployProgress('binary', `校验 ${label} SHA256…`);
     try {
       await verifyFileSha256(zip, release.sha256, label);
@@ -486,7 +494,7 @@ export function apply(ctx: Context) {
       throw e;
     }
     await mkdir(target, { recursive: true });
-    const result = await runProcess('C:\\Windows\\System32\\tar.exe', ['-xf', zip, '-C', target], {
+    const result = await runProcess(cfg.tarPath || 'tar', ['-xf', zip, '-C', target], {
       signal,
       timeout: 300_000,
     });
@@ -505,36 +513,36 @@ export function apply(ctx: Context) {
       }
       return found;
     }
-    const release = await latestRelease();
+    const release = await latestRelease(cfg);
     deployState.latestVersion = release.version;
     setDeployProgress('binary', `未找到 Breeze，准备下载 v${release.version} 运行包…`);
     const zip = join(DEPLOY_DIR, release.assetName);
     if ((await sizeOf(zip)) < 10_000_000) {
-      await downloadFile(release.assetUrl, zip, signal, 'binary', `Breeze v${release.version} 运行包`);
+      await downloadFile(cfg, release.assetUrl, zip, signal, 'binary', `Breeze v${release.version} 运行包`);
     }
     setDeployProgress('binary', '解压运行包…');
     const binRoot = join(BREEZE_ROOT, 'bin');
-    await extractZip(zip, binRoot, signal, release, `Breeze v${release.version} 运行包`);
-    const expected = join(binRoot, release.assetName.replace(/\.zip$/i, ''), 'breeze-server.exe');
+    await extractZip(cfg, zip, binRoot, signal, release, `Breeze v${release.version} 运行包`);
+    const expected = join(binRoot, release.assetName.replace(/\.zip$/i, ''), BREEZE_BINARY);
     if ((await sizeOf(expected)) > 1_000_000) return expected;
     const again = await findBinary({ ...cfg, breezeExe: expected });
-    if (!again) throw new Error('运行包解压后没有找到 breeze-server.exe。');
+    if (!again) throw new Error(`运行包解压后没有找到 ${BREEZE_BINARY}。`);
     return again;
   };
 
   const updateBinary = async (cfg: Resolved, release: Release, signal: AbortSignal) => {
     const binRoot = join(BREEZE_ROOT, 'bin');
     const targetDir = join(binRoot, release.assetName.replace(/\.zip$/i, ''));
-    const expected = join(targetDir, 'breeze-server.exe');
+    const expected = join(targetDir, BREEZE_BINARY);
     if ((await sizeOf(expected)) > 1_000_000 && versionOf(expected) === release.version) return expected;
     setDeployProgress('binary', `更新 Breeze 到 v${release.version}：准备运行包…`);
     const zip = join(DEPLOY_DIR, release.assetName);
     if ((await sizeOf(zip)) < 10_000_000) {
-      await downloadFile(release.assetUrl, zip, signal, 'binary', `Breeze v${release.version} 运行包`);
+      await downloadFile(cfg, release.assetUrl, zip, signal, 'binary', `Breeze v${release.version} 运行包`);
     }
     setDeployProgress('binary', `解压 Breeze v${release.version} 运行包…`);
-    await extractZip(zip, binRoot, signal, release, `Breeze v${release.version} 运行包`);
-    if ((await sizeOf(expected)) < 1_000_000) throw new Error('更新包解压后没有找到 breeze-server.exe。');
+    await extractZip(cfg, zip, binRoot, signal, release, `Breeze v${release.version} 运行包`);
+    if ((await sizeOf(expected)) < 1_000_000) throw new Error(`更新包解压后没有找到 ${BREEZE_BINARY}。`);
     return expected;
   };
 
@@ -550,8 +558,8 @@ export function apply(ctx: Context) {
       }
       return found;
     }
-    const dest = join(BREEZE_ROOT, 'models', BREEZE_MODEL_FILE);
-    await downloadFile(MODEL_URL, dest, signal, 'model', `q8_0 模型（约 ${fmtBytes(3_568_844_480)}）`);
+    const dest = join(BREEZE_ROOT, 'models', basename(cfg.breezeModelFile || 'model.gguf'));
+    await downloadFile(cfg, cfg.breezeModelUrl, dest, signal, 'model', `q8_0 模型（约 ${fmtBytes(3_568_844_480)}）`);
     if ((await sizeOf(dest)) < 100_000_000) throw new Error('模型下载后文件不完整。');
     return dest;
   };
@@ -572,7 +580,8 @@ export function apply(ctx: Context) {
         await mkdir(join(BREEZE_ROOT, 'models'), { recursive: true });
         await mkdir(join(BREEZE_ROOT, 'voices'), { recursive: true });
         const cfg = await readCfg();
-        const release = await latestRelease();
+        if (cfg.localMode !== 'breeze') throw new Error('当前本机模式不是 Breeze，跳过一键部署；请改用本机 OpenAI 兼容服务或网络模型。');
+        const release = await latestRelease(cfg);
         deployState.latestVersion = release.version;
         const currentExe = await findBinary(cfg);
         const currentVersion = versionOf(currentExe);
@@ -650,21 +659,35 @@ export function apply(ctx: Context) {
     const cfg = await readCfg();
     const exe = await findBinary(cfg);
     const model = await findModel(cfg);
-    const release = await latestRelease();
+    let release: Release | null = null;
+    let releaseError = '';
+    try {
+      release = await latestRelease(cfg);
+    } catch (e: any) {
+      releaseError = String(e?.message ?? e);
+    }
     const voices = await listVoiceFiles(HIVE_VOICES);
     const legacyVoices = cfg.voicesDir && cfg.voicesDir !== HIVE_VOICES ? await listVoiceFiles(cfg.voicesDir) : [];
     const missing: string[] = [];
-    if (!exe) missing.push('Breeze 运行包');
-    if (!model) missing.push('q8_0 模型');
-    if (!voices.length && !legacyVoices.length) missing.push('音色文件');
+    if (cfg.localMode === 'breeze') {
+      if (!exe) missing.push('Breeze 运行包');
+      if (!model) missing.push('q8_0 模型');
+      if (!voices.length && !legacyVoices.length) missing.push('音色文件');
+    }
     let online = false;
     if (cfg.engine === 'local') {
       try {
-        online = await healthy(cfg.baseUrl);
+        if (cfg.localMode === 'breeze') online = await healthy(cfg.baseUrl);
+        else {
+          const res = await fetch(`${apiBase(cfg.baseUrl)}/models`, { signal: AbortSignal.timeout(6000) });
+          online = res.status < 500;
+        }
       } catch {
         online = false;
       }
     }
+    const rel = release;
+    const currentVersion = versionOf(exe);
     return {
       ok: true,
       running: deployState.running,
@@ -678,8 +701,10 @@ export function apply(ctx: Context) {
       voice: deployState.voice || cfg.voice,
       online: deployState.online || online,
       mode: deployState.mode,
+      deployable: cfg.localMode === 'breeze',
       previousVersion: deployState.previousVersion,
-      updateAvailable: Boolean(exe && versionOf(exe) && release.version && compareVersion(release.version, versionOf(exe)) > 0),
+      updateAvailable: Boolean(exe && currentVersion && rel && compareVersion(rel.version, currentVersion) > 0),
+      releaseError,
       installed: {
         binary: Boolean(exe),
         model: Boolean(model),
@@ -751,11 +776,17 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 
   <div id="localBox">
     <div class="grid">
-      <label class="wide">Breeze 服务地址<input type="text" id="baseUrl" value="${esc(cfg.baseUrl)}" placeholder="http://127.0.0.1:8139"></label>
-      <label>默认音色 id<input type="text" id="voice" value="${esc(cfg.voice)}" placeholder="dafeiyu"></label>
-      <label>ComfyUI 地址（腾显存）<input type="text" id="comfyUrl" value="${esc(cfg.comfyUrl)}"></label>
+      <label>本机引擎<select id="localMode">
+        <option value="breeze"${cfg.localMode === 'breeze' ? ' selected' : ''}>Breeze（内置一键部署）</option>
+        <option value="openai"${cfg.localMode === 'openai' ? ' selected' : ''}>OpenAI 兼容本地服务</option>
+      </select></label>
+      <label>本机模型名<input type="text" id="localModel" value="${esc(cfg.localModel)}" placeholder="tts-1"></label>
+      <label class="wide">服务地址<input type="text" id="baseUrl" value="${esc(cfg.baseUrl)}" placeholder="http://127.0.0.1:8139"></label>
+      <label>默认音色 id<input type="text" id="voice" value="${esc(cfg.voice)}" placeholder="留空自动选择"></label>
+      <label>ComfyUI 地址（可选，腾显存）<input type="text" id="comfyUrl" value="${esc(cfg.comfyUrl)}" placeholder="http://127.0.0.1:8188"></label>
+      <label style="display:flex;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="breezeAutoStart" ${cfg.breezeAutoStart ? 'checked' : ''}>Breeze 未运行时自动拉起</label>
     </div>
-    <p class="hint">本机 Breeze 没起会自动拉起；显存被 ComfyUI 占着会先让它卸载模型。任何 OpenAI 兼容的本地语音服务也可以直接把地址填在这里。</p>
+    <p class="hint">Breeze 模式会自动启动、必要时让 ComfyUI 卸载模型；OpenAI 兼容模式只请求服务，不尝试启动 Breeze。</p>
   </div>
 
   <div id="cloudBox" hidden>
@@ -773,7 +804,7 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 
 <section class="card">
   <div class="card-head"><h2>本机语音一键部署</h2><span class="pill" id="deployPill">检查中…</span></div>
-  <p class="sub">第一次用本机模型时点一次：自动下载 Breeze 运行包和 q8_0 模型（约 3.6GB），装到本插件目录的 data/breeze，解压、启动并准备默认音色。已有的文件会迁移或跳过，下载支持断点续传。</p>
+  <p class="sub">只对 Breeze 本机引擎有效：自动下载 Breeze 运行包和模型（约 3.6GB），装到本插件目录的 data/breeze，解压、启动并准备默认音色。已有的文件会迁移或跳过，下载支持断点续传。使用 OpenAI 兼容本机服务或网络模型时不需要这一步。</p>
   <div class="deploy-bar"><i id="deployBar"></i></div>
   <div class="hint" id="deployInfo">还没检查。</div>
   <div class="row">
@@ -798,16 +829,31 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 </section>
 
 <section class="card">
-  <details><summary>高级：本机引擎路径与显存</summary>
+  <details><summary>高级：引擎、部署与播放</summary>
     <div class="grid">
-      <label class="wide">breeze-server.exe<input type="text" id="breezeExe" value="${esc(cfg.breezeExe)}"></label>
-      <label class="wide">模型 gguf<input type="text" id="breezeModel" value="${esc(cfg.breezeModel)}"></label>
-      <label class="wide">voices 目录<input type="text" id="voicesDir" value="${esc(cfg.voicesDir)}"></label>
+      <label>Breeze 可执行文件<input type="text" id="breezeExe" value="${esc(cfg.breezeExe)}"></label>
+      <label>模型文件<input type="text" id="breezeModel" value="${esc(cfg.breezeModel)}"></label>
+      <label class="wide">音色目录<input type="text" id="voicesDir" value="${esc(cfg.voicesDir)}"></label>
+      <label>Breeze 仓库<input type="text" id="breezeRepo" value="${esc(cfg.breezeRepo)}" placeholder="owner/repo"></label>
+      <label>运行包资产后缀<input type="text" id="breezeAssetPattern" value="${esc(cfg.breezeAssetPattern)}" placeholder="windows-x64-vulkan.zip"></label>
+      <label class="wide">模型下载地址<input type="text" id="breezeModelUrl" value="${esc(cfg.breezeModelUrl)}"></label>
+      <label>模型文件名<input type="text" id="breezeModelFile" value="${esc(cfg.breezeModelFile)}"></label>
+      <label>播放器<select id="player">
+        <option value="auto"${cfg.player === 'auto' ? ' selected' : ''}>自动（按系统）</option>
+        <option value="powershell"${cfg.player === 'powershell' ? ' selected' : ''}>PowerShell</option>
+        <option value="afplay"${cfg.player === 'afplay' ? ' selected' : ''}>afplay（macOS）</option>
+        <option value="ffplay"${cfg.player === 'ffplay' ? ' selected' : ''}>ffplay</option>
+        <option value="aplay"${cfg.player === 'aplay' ? ' selected' : ''}>aplay</option>
+        <option value="none"${cfg.player === 'none' ? ' selected' : ''}>不播放</option>
+      </select></label>
+      <label>播放器路径（可选）<input type="text" id="playerPath" value="${esc(cfg.playerPath)}" placeholder="留空用系统命令"></label>
+      <label>curl 路径（可选）<input type="text" id="curlPath" value="${esc(cfg.curlPath)}" placeholder="留空用 PATH 里的 curl"></label>
+      <label>tar 路径（可选）<input type="text" id="tarPath" value="${esc(cfg.tarPath)}" placeholder="留空用 PATH 里的 tar"></label>
       <label>单句上限字数<input type="number" id="maxChars" value="${cfg.maxChars}"></label>
       <label style="display:flex;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="play" ${cfg.play ? 'checked' : ''}>默认在本机扬声器播放</label>
     </div>
     <div class="row"><button type="button" id="saveAdv">保存高级设置</button></div>
-    <p class="hint">这些是本机模型和显存相关设置；网络模型用不到。</p>
+    <p class="hint">这些配置只影响本机引擎、Breeze 部署和后台播放；网络模型用不到。</p>
   </details>
 </section>
 <pre id="out"></pre>
@@ -880,6 +926,14 @@ let deployTimer = null;
 function paintDeploy(s) {
   var inst = s.installed || {};
   var latest = s.latest || {};
+  if (s.deployable === false) {
+    $('deployPill').textContent = '不适用';
+    $('deployInfo').textContent = '当前本机模式不是 Breeze，一键部署不适用。可以直接填本机 OpenAI 兼容服务地址，或改用网络模型。';
+    $('deployBar').style.width = '0%';
+    $('deployBtn').disabled = true;
+    $('deployUpdate').hidden = true;
+    return;
+  }
   var newer = Boolean(s.updateAvailable && latest.version);
   var pill = $('deployPill');
   if (s.running) {
@@ -943,7 +997,9 @@ $('modelId').onchange = function () { fillVoiceHints($('modelId').value); out('�
 function readAll() {
   return {
     engine: draftEngine,
+    localMode: $('localMode').value,
     baseUrl: $('baseUrl').value.trim(),
+    localModel: $('localModel').value.trim(),
     voice: $('voice').value.trim(),
     modelId: $('modelId').value,
     cloudVoice: $('cloudVoice').value.trim(),
@@ -951,6 +1007,15 @@ function readAll() {
     breezeExe: $('breezeExe').value.trim(),
     breezeModel: $('breezeModel').value.trim(),
     voicesDir: $('voicesDir').value.trim(),
+    breezeAutoStart: $('breezeAutoStart').checked,
+    breezeRepo: $('breezeRepo').value.trim(),
+    breezeAssetPattern: $('breezeAssetPattern').value.trim(),
+    breezeModelUrl: $('breezeModelUrl').value.trim(),
+    breezeModelFile: $('breezeModelFile').value.trim(),
+    player: $('player').value,
+    playerPath: $('playerPath').value.trim(),
+    curlPath: $('curlPath').value.trim(),
+    tarPath: $('tarPath').value.trim(),
     maxChars: Number($('maxChars').value) || 400,
     play: $('play').checked
   };
@@ -960,7 +1025,7 @@ async function saveConfig() {
     $('cloudVoice').value = $('voiceHints').options[0].value;
   const r = await post('/plugins/voice/config', { config: readAll() });
   out(r);
-  if (r.ok && r.config) { Object.assign(CFG, r.config); draftEngine = CFG.engine; paint(); }
+  if (r.ok && r.config) { Object.assign(CFG, r.config); draftEngine = CFG.engine; paint(); refreshDeploy(); }
 }
 $('saveModel').onclick = saveConfig;
 $('saveAdv').onclick = saveConfig;
@@ -999,17 +1064,39 @@ refreshDeploy();
       if (!/^https?:\/\//.test(baseUrl)) throw new Error('服务地址要以 http:// 或 https:// 开头。');
       const next: Partial<Resolved> = {
         engine: input.engine === 'cloud' ? 'cloud' : 'local',
+        localMode: input.localMode === 'openai' ? 'openai' : 'breeze',
         baseUrl,
-        voice: String(input.voice || DEFAULTS.voice),
+        localModel: String(input.localModel || DEFAULTS.localModel),
+        voice: String(input.voice || ''),
         modelId: String(input.modelId || ''),
         cloudVoice: String(input.cloudVoice || ''),
-        comfyUrl: String(input.comfyUrl || DEFAULTS.comfyUrl).replace(/\/$/, ''),
+        comfyUrl: String(input.comfyUrl || '').replace(/\/$/, ''),
         breezeExe: String(input.breezeExe || DEFAULTS.breezeExe),
         breezeModel: String(input.breezeModel || DEFAULTS.breezeModel),
         voicesDir: String(input.voicesDir || DEFAULTS.voicesDir),
+        breezeAutoStart: input.breezeAutoStart !== false,
+        breezeRepo: String(input.breezeRepo || DEFAULTS.breezeRepo),
+        breezeAssetPattern: String(input.breezeAssetPattern || DEFAULTS.breezeAssetPattern),
+        breezeModelUrl: String(input.breezeModelUrl || DEFAULTS.breezeModelUrl),
+        breezeModelFile: String(input.breezeModelFile || DEFAULTS.breezeModelFile),
+        player: ['auto', 'powershell', 'afplay', 'ffplay', 'aplay', 'none'].includes(String(input.player))
+          ? String(input.player) as Resolved['player']
+          : 'auto',
+        playerPath: String(input.playerPath || ''),
+        curlPath: String(input.curlPath || ''),
+        tarPath: String(input.tarPath || ''),
         play: input.play !== false,
         maxChars: Number(input.maxChars) > 0 && Number(input.maxChars) <= 2000 ? Math.floor(Number(input.maxChars)) : DEFAULTS.maxChars,
       };
+      if (!next.localModel || !/^[A-Za-z0-9._:/-]{1,160}$/.test(next.localModel))
+        throw new Error('本机模型名不合法。');
+      if (!next.breezeRepo || next.breezeRepo.split('/').filter(Boolean).length !== 2)
+        throw new Error('Breeze 仓库要写成 owner/repo。');
+      if (!next.breezeAssetPattern) throw new Error('运行包资产后缀不能为空。');
+      if (!next.breezeModelUrl || !/^https?:\/\//.test(next.breezeModelUrl))
+        throw new Error('模型下载地址要以 http:// 或 https:// 开头。');
+      if (!next.breezeModelFile || next.breezeModelFile.includes('/') || next.breezeModelFile.includes('\\'))
+        throw new Error('模型文件名不能包含路径分隔符。');
       if (next.engine === 'cloud' && next.modelId) {
         const model = ctx.models.list('tts').find((m) => m.id === next.modelId);
         if (!model) throw new Error('这个语音模型现在不可用（被停用或配置有误）。');
@@ -1026,15 +1113,24 @@ refreshDeploy();
   ctx.web.api('/plugins/voice/test', async (_req, res) => {
     const cfg = await readCfg();
     if (cfg.engine === 'local') {
-      const up = await healthy(cfg.baseUrl);
-      if (!up && isLoopback(cfg.baseUrl)) {
-        try {
-          await ensureBreeze(cfg, AbortSignal.timeout(120_000));
-        } catch {
-          /* ignore */
+      if (cfg.localMode === 'breeze') {
+        if (!await healthy(cfg.baseUrl) && cfg.breezeAutoStart && isLoopback(cfg.baseUrl)) {
+          try {
+            await ensureBreeze(cfg, AbortSignal.timeout(120_000));
+          } catch {
+            /* ignore */
+          }
         }
+        sendJson(res, 200, { ok: true, engine: 'local', localMode: 'breeze', online: await healthy(cfg.baseUrl), baseUrl: cfg.baseUrl, voice: cfg.voice });
+        return;
       }
-      sendJson(res, 200, { ok: true, engine: 'local', online: await healthy(cfg.baseUrl), baseUrl: cfg.baseUrl, voice: cfg.voice });
+      try {
+        const t = targetOf(ctx, cfg);
+        const r = await fetch(`${apiBase(t.base)}/models`, { signal: AbortSignal.timeout(8000) });
+        sendJson(res, 200, { ok: true, engine: 'local', localMode: 'openai', online: true, status: r.status, model: t.model, baseUrl: t.base });
+      } catch (e: any) {
+        sendJson(res, 200, { ok: false, engine: 'local', localMode: 'openai', online: false, error: String(e?.message ?? e) });
+      }
       return;
     }
     try {

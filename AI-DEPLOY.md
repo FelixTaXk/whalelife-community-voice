@@ -1,6 +1,6 @@
 # 语音模块 · AI 一键部署手册
 
-这份手册给「另一个 AI」或另一个人执行。目标是把本机语音模型装进 **WhaleLife 仓库里的语音插件目录**，不依赖任何作者机器的绝对路径。
+这份手册给「另一个 AI」或另一个人执行。目标是把本机语音模型装进 **WhaleLife 仓库里的语音插件目录**，不依赖任何外部固定路径。
 
 ## 0. 适用范围
 
@@ -33,7 +33,7 @@
 
 唱歌已拆成独立插件 `sing`，如果要用，另外安装到 `plugins/sing`，不在本包内。
 
-**不要**把模型装到 `D:\dafeiyu` 或作者的其他私人目录。旧路径只作为迁移来源，部署完成后配置会指向插件目录。
+**不要**把模型装到插件目录以外的私人目录。插件只使用自己的 `data` 目录；如果配置里保留旧路径，部署时会迁移到插件目录。无图形环境或非 Windows 机器可以跳过 Breeze，直接使用本机 OpenAI 兼容服务或网络 TTS。
 
 ## 1. 把插件放进目标仓库
 
@@ -154,7 +154,7 @@ if ($Status.updateAvailable -and -not $Status.running) {
 
 更新只替换 Breeze 运行包，不改模型、音色和 `config.json` 里的模型设置。下载包进入解压前，会先用该发行资产自带的官方 SHA256 摘要校验；摘要缺失或不匹配就停止安装，不会解包坏包。更新时只会短暂停掉本实例登记且仍能核对归属的 Breeze，完成后自动用新版本重启；`previousVersion` 会记录更新前版本，`updateAvailable=false` 表示已是最新。已是最新时调用更新接口会直接返回 `stage=done`，不会重复下载或重启。
 
-如果 GitHub 运行包下载报 `fetch failed`，插件会自动改用 Windows 自带的 `curl.exe` 重试；下载缓存仍在 `data/deploy`，中断后可以续传。
+如果 GitHub 运行包下载报 `fetch failed`，插件会改用 `curl` 命令重试；Windows 10+ 和主流 Linux/macOS 都自带 `curl`，也可以用高级设置里的 `curlPath` 指向其他位置。下载缓存在 `data/deploy`，中断后可续传。
 
 ## 4. 验收
 
@@ -193,12 +193,14 @@ Invoke-RestMethod "$Base/plugins/voice/test" -Method Post -WebSession $Session -
 Invoke-RestMethod "$Base/plugins/voice/speak/voices/list" -Method Post -WebSession $Session -ContentType 'application/json' -Body '{}' | ConvertTo-Json -Depth 6
 ```
 
-应返回 `ok: true`，并且 `voices` 至少有一个 `xiaochi_soft` 或部署时生成的音色。
+应返回 `ok: true`，并且 `voices` 至少有一个音色（新部署通常生成 `default`）。如果已有用户音色，会沿用第一个可用音色。
 
 ### 4.4 实际合成
 
 ```powershell
-$Body = @{ name = 'xiaochi_soft'; text = '语音模块部署完成，这是一段测试。' } | ConvertTo-Json -Compress
+$Voices = (Invoke-RestMethod "$Base/plugins/voice/speak/voices/list" -Method Post -WebSession $Session -ContentType 'application/json' -Body '{}').voices
+$Name = $Voices[0].id
+$Body = @{ name = $Name; text = '语音模块部署完成，这是一段测试。' } | ConvertTo-Json -Compress
 $Result = Invoke-RestMethod "$Base/plugins/voice/speak/voices/preview" -Method Post -WebSession $Session -ContentType 'application/json' -Body $Body
 $Result | Select-Object ok, voice, engine, model, bytes, mime, error | Format-List
 ```
@@ -274,7 +276,7 @@ $env:WHALELIFE_FFMPEG = 'ffmpeg'
 给执行部署的 AI：
 
 1. 先读 `deploy/status`，不要不看状态就重复下载。
-2. 只把文件放到 `<WhaleLife>\plugins\voice\data\breeze`，不要写到作者私人目录。
+2. 只把文件放到 `<WhaleLife>\plugins\voice\data\breeze`，不要写到插件目录以外的私人目录。
 3. 不要删除 `data/config.json`、`data/breeze/voices` 或用户已有的 `.breeze`。
 4. 轮询 `deploy/status` 直到 `running=false`；`stage=done` 才算成功。
 5. `stage=error` 时停止，把 `error` 和 `message` 原样回报，不要盲目重试多次。
