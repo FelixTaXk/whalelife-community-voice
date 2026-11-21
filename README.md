@@ -1,13 +1,13 @@
 # 语音模块
 
-语音模块只负责「接哪个语音模型」和「共享配置」。说话是内置子插件，随主插件一起安装；唱歌已拆成独立的可选插件。
+语音模块只负责「接哪个语音模型」和「共享配置」。说话和唱歌都是内置子插件，随主插件一起安装，设置页收在语音模块下分组展示。
 
 | 插件 | 页面 | 工具 | 服务 |
 | --- | --- | --- | --- |
 | 说话 `speak`（内置） | `/plugins/voice/speak/settings` | `say_out_loud`、`qq_say`、`voice_list`、`voice_use`、`voice_create`、`voice_clone`、`voice_delete` | `voice/speak` |
-| 唱歌 `sing`（独立可选） | `/plugins/sing/settings` | `voice_sing` | `voice/sing` |
+| 唱歌 `sing`（内置） | `/plugins/voice/sing/settings` | `voice_sing` | `voice/sing` |
 
-主页面 `http://127.0.0.1:9270/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。说话随主插件默认可用；唱歌要单独安装 `whalelife-community-sing`。
+主页面 `http://127.0.0.1:9270/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。说话和唱歌作为 `sub/speak`、`sub/sing` 子插件随包安装，控制台会按父级分组列出各自设置。
 
 ## 本机语音一键部署
 
@@ -56,7 +56,7 @@ const voice = ctx.get('voice');
 await voice.config();
 await voice.save({ voice: 'default' });
 await voice.synthesize({ text: '你好' });
-await voice.sing({ sourcePath: '...' }); // 仅当独立唱歌插件已安装时可用；内部转给 voice_sing 工具
+await voice.sing({ sourcePath: '...' }); // 唱歌子插件加载后可用；内部转给 voice_sing 工具
 ```
 
 ## 说话（子插件 speak）
@@ -68,9 +68,9 @@ await voice.sing({ sourcePath: '...' }); // 仅当独立唱歌插件已安装时
   - `POST /plugins/voice/speak/test`
   - `POST /plugins/voice/speak/voices/list|preview|add|use|delete|create|clone`
 
-## 唱歌（独立插件 sing，第一期 Seed-VC）
+## 唱歌（子插件 sing，第一期 Seed-VC）
 
-唱歌是可选能力，已拆到独立仓库 `FelixTaXk/whalelife-community-sing`，安装路径是 `plugins/sing`，不再随语音模块打包。它复用语音模块的配置和数据目录，所以必须先启用 `voice` 0.11.1 或更高版本；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
+唱歌作为语音模块的内置子插件，安装路径是 `plugins/voice/sub/sing`，运行 ID 是 `voice/sing`，设置页在 `/plugins/voice/sing/settings`，不再占一个顶层插件位置。源码保留在独立仓库 `FelixTaXk/whalelife-community-sing`，发布时作为语音包里的子插件一起打包。它复用语音模块的配置和数据目录，所以父级 `voice` 必须先启用；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
 
 | 环境变量 | 默认 |
 | --- | --- |
@@ -101,16 +101,16 @@ await voice.sing({ sourcePath: '...' }); // 仅当独立唱歌插件已安装时
 
 ### 接口
 
-- `POST /plugins/sing/refs`：列出参考音。
-- `POST /plugins/sing/generated`：列出 `data/audio/output`（兼容 `data/breeze/output`）里的人声轨和音色库。
-- `POST /plugins/sing/songs`：列出 `data/songs` 和 Seed-VC 示例曲目。
-- `POST /plugins/sing/generate/start`：body `{ text, voice? }`，立即返回 `{ id, job }`，后台生成；`job` 含 `state/stage/progress/elapsedMs/logs`。
-- `POST /plugins/sing/generate/status`：body `{ id }`，轮询进度；完成后 `job.result` 带 `path/bytes/voice`。
-- `POST /plugins/sing/generate/cancel`：body `{ id }`，取消正在生成的任务。
-- `POST /plugins/sing/upload`：body `{ base64, filename }`，把本地音频转成 WAV 存进 `data/audio/output`，返回 `path/bytes`。
-- `POST /plugins/sing/generate`：同步版生成接口，body `{ text, voice? }`，保留给脚本调用；音色库为空返回 409 `no_voices`。
-- `POST /plugins/sing/convert`：body `{ sourcePath, ref?, steps?, cfgRate?, pitch? }`，`sourcePath` 可在 `data/audio/output`、兼容的 `data/breeze/output` 或曲目库里；或 `{ base64, filename, ... }` 用上传的人声。返回 WAV base64。子插件路由前缀是 `/plugins/sing/`，所以转换接口带 `/convert`，避免和精确路径 `/plugins/sing` 冲突。
-- `POST /plugins/sing/send`：body `{ base64, groupId }`，作为群语音发送。
+- `POST /plugins/voice/sing/refs`：列出参考音。
+- `POST /plugins/voice/sing/generated`：列出 `data/audio/output`（兼容 `data/breeze/output`）里的人声轨和音色库。
+- `POST /plugins/voice/sing/songs`：列出 `data/songs` 和 Seed-VC 示例曲目。
+- `POST /plugins/voice/sing/generate/start`：body `{ text, voice? }`，立即返回 `{ id, job }`，后台生成；`job` 含 `state/stage/progress/elapsedMs/logs`。
+- `POST /plugins/voice/sing/generate/status`：body `{ id }`，轮询进度；完成后 `job.result` 带 `path/bytes/voice`。
+- `POST /plugins/voice/sing/generate/cancel`：body `{ id }`，取消正在生成的任务。
+- `POST /plugins/voice/sing/upload`：body `{ base64, filename }`，把本地音频转成 WAV 存进 `data/audio/output`，返回 `path/bytes`。
+- `POST /plugins/voice/sing/generate`：同步版生成接口，body `{ text, voice? }`，保留给脚本调用；音色库为空返回 409 `no_voices`。
+- `POST /plugins/voice/sing/convert`：body `{ sourcePath, ref?, steps?, cfgRate?, pitch? }`，`sourcePath` 可在 `data/audio/output`、兼容的 `data/breeze/output` 或曲目库里；或 `{ base64, filename, ... }` 用上传的人声。返回 WAV base64。子插件路由前缀是 `/plugins/voice/sing/`，所以转换接口带 `/convert`，避免和精确路径 `/plugins/voice/sing` 冲突。
+- `POST /plugins/voice/sing/send`：body `{ base64, groupId }`，作为群语音发送。
 
 ### 限制
 
@@ -131,5 +131,6 @@ await voice.sing({ sourcePath: '...' }); // 仅当独立唱歌插件已安装时
 3. 重启本体，或到控制台「插件管理」里重载该插件。
 4. 在「插件管理」确认状态为「运行中」；首次使用请打开插件设置页完成必要配置。
 
-本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。发行包只含主插件和内置说话子插件 `sub/speak`；唱歌 `sing` 不在包内，需要时从 `whalelife-community-sing` 单独安装。
+本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。发行包包含主插件、内置说话子插件 `sub/speak` 和内置唱歌子插件 `sub/sing`；三者随包一起安装，不再需要单独装唱歌顶层插件。
+
 

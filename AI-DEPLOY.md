@@ -28,10 +28,12 @@
 │  │  ├─ voices/*.breeze
 │  │  └─ output/                      # 唱歌页「一键生成念白人声轨」的输出
 │  └─ songs/                          # 曲目库：放已分离好的歌曲人声（WAV/MP3/M4A/FLAC/OGG）
-└─ sub/speak/
+└─ sub/
+   ├─ speak/
+   └─ sing/
 ```
 
-唱歌已拆成独立插件 `sing`，如果要用，另外安装到 `plugins/sing`，不在本包内。
+唱歌 `sing` 作为语音模块的子插件，和说话一起放在 `plugins/voice/sub/sing`，设置页是 `/plugins/voice/sing/settings`。
 
 **不要**把模型装到插件目录以外的私人目录。插件只使用自己的 `data` 目录；如果配置里保留旧路径，部署时会迁移到插件目录。无图形环境或非 Windows 机器可以跳过 Breeze，直接使用本机 OpenAI 兼容服务或网络 TTS。
 
@@ -50,6 +52,8 @@
 <WhaleLife>\plugins\voice\index.ts
 <WhaleLife>\plugins\voice\shared.ts
 <WhaleLife>\plugins\voice\sub\speak\plugin.yaml
+<WhaleLife>\plugins\voice\sub\sing\plugin.yaml
+<WhaleLife>\plugins\voice\sub\sing\index.ts
 ```
 
 `plugin.yaml` 里应当是：
@@ -57,7 +61,7 @@
 ```yaml
 id: voice
 name: 语音模块
-sub: [speak]
+sub: [speak, sing]
 ```
 
 ## 2. 启动 WhaleLife
@@ -68,7 +72,7 @@ sub: [speak]
 Invoke-RestMethod http://127.0.0.1:9270/api/status
 ```
 
-返回里有 `voice`、`voice/speak`，且 `status` 为 `active`；如果另外装了唱歌插件，还应有顶层 `sing`。
+返回里有 `voice`、`voice/speak`、`voice/sing`，且 `status` 为 `active`。
 
 如果插件没加载，先在 WhaleLife 设置页重载插件，或执行：
 
@@ -260,7 +264,7 @@ Get-CimInstance Win32_Process -Filter "Name='breeze-server.exe'" |
 
 ## 8. 可选：唱歌（Seed-VC）
 
-唱歌是独立可选插件，不在一键部署和 voice 包内；需要时把 `sing` 安装到 `plugins/sing`。它不是一键部署范围，还需要单独的 Python 环境和 Seed-VC 仓库。默认在语音模块目录 `plugins/voice/data/seed-vc` 查找，也可用环境变量指向已有环境：
+唱歌是语音模块的内置子插件，随 voice 包放在 `plugins/voice/sub/sing`，控制台设置页是 `/plugins/voice/sing/settings`。它不是一键部署范围，需要单独的 Python 环境和 Seed-VC 仓库。默认在语音模块目录 `plugins/voice/data/seed-vc` 查找，也可用环境变量指向已有环境：
 
 ```powershell
 $env:WHALELIFE_SING_ROOT = 'D:\path\to\seed-vc'
@@ -269,7 +273,7 @@ $env:WHALELIFE_SING_RUNNER = "$env:WHALELIFE_SING_ROOT\run_seedvc.py"
 $env:WHALELIFE_FFMPEG = 'ffmpeg'
 ```
 
-设置后重启 WhaleLife，再打开 `/plugins/sing/settings` 上传人声轨。唱歌页也支持用 Breeze 一键生成念白人声轨（带进度条、阶段日志和取消），把本地音频上传到 `data/breeze/output` 后直接选用，以及从 `data/songs` 曲目库选一首带旋律的歌曲人声。
+设置后重启 WhaleLife，再打开 `/plugins/voice/sing/settings` 上传人声轨。唱歌页也支持用 Breeze 一键生成念白人声轨（带进度条、阶段日志和取消），把本地音频上传到 `data/breeze/output` 后直接选用，以及从 `data/songs` 曲目库选一首带旋律的歌曲人声。
 
 ## 9. AI 执行约束
 
@@ -291,6 +295,7 @@ $env:WHALELIFE_FFMPEG = 'ffmpeg'
 <WhaleLife>\plugins\voice
 ```
 
-包内只包含主插件代码、清单、README、本手册和内置 `sub/speak`，**不包含** `data/breeze`、模型、音色、下载缓存和独立唱歌插件 `sing`，所以体积很小。装好后按第 3 节执行一键部署，模型和运行包会自动下载到 `data` 下。
+包内包含主插件代码、清单、README、本手册、内置 `sub/speak` 和内置唱歌子插件 `sub/sing`，**不包含** `data/breeze`、模型、音色和下载缓存，所以体积仍然很小。装好后按第 3 节执行一键部署，模型和运行包会自动下载到 `data` 下。
 
 如果包来自别人已经部署过的机器，仍然建议先检查 `data/breeze` 是否被误带进来；带了也可以直接用，但会失去“一键部署”的干净初始状态。
+
