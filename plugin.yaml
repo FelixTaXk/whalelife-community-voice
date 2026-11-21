@@ -1,6 +1,6 @@
 id: voice
 name: 语音模块
-version: 0.11.0
+version: 0.11.1
 description: 通用语音接入：本机 Breeze、本机 OpenAI 兼容 TTS 或网络 OpenAI 兼容 TTS；引擎、部署源、播放器和路径均可配置；内置说话子插件，唱歌为独立可选插件
 apiVersion: "1.0.0"
 depends: [models, web, tools]
@@ -8,3 +8,4 @@ sub: [speak]
 console:
   groupChildren: true
 repository: https://github.com/FelixTaXk/whalelife-community-voice
+

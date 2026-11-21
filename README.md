@@ -70,7 +70,7 @@ await voice.sing({ sourcePath: '...' }); // 仅当独立唱歌插件已安装时
 
 ## 唱歌（独立插件 sing，第一期 Seed-VC）
 
-唱歌是可选能力，已拆到独立仓库 `FelixTaXk/whalelife-community-sing`，安装路径是 `plugins/sing`，不再随语音模块打包。它复用语音模块的配置和数据目录，所以必须先启用 `voice` 0.11.0 或更高版本；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
+唱歌是可选能力，已拆到独立仓库 `FelixTaXk/whalelife-community-sing`，安装路径是 `plugins/sing`，不再随语音模块打包。它复用语音模块的配置和数据目录，所以必须先启用 `voice` 0.11.1 或更高版本；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
 
 | 环境变量 | 默认 |
 | --- | --- |
@@ -132,3 +132,4 @@ await voice.sing({ sourcePath: '...' }); // 仅当独立唱歌插件已安装时
 4. 在「插件管理」确认状态为「运行中」；首次使用请打开插件设置页完成必要配置。
 
 本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。发行包只含主插件和内置说话子插件 `sub/speak`；唱歌 `sing` 不在包内，需要时从 `whalelife-community-sing` 单独安装。
+
