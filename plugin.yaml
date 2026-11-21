@@ -1,7 +1,7 @@
 id: voice
 name: 语音模块
-version: 0.12.0
-description: 通用语音接入：本机 Breeze、本机 OpenAI 兼容 TTS 或网络 OpenAI 兼容 TTS；引擎、部署源、播放器和路径均可配置；内置说话与唱歌子插件
+version: 0.13.0
+description: 通用语音接入：本机 Breeze、本机 OpenAI 兼容 TTS 或网络 OpenAI 兼容 TTS；引擎、部署源、播放器和路径均可配置；说话与唱歌作为独立子插件分别发布
 apiVersion: "1.0.0"
 depends: [models, web, tools]
 sub: [speak, sing]

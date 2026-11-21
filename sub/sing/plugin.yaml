@@ -1,9 +1,9 @@
 id: sing
 name: 唱歌
-version: 0.9.0
-description: 语音模块内置的唱歌子插件：Seed-VC 零样本歌声转换，支持曲目库选歌、语音模块念白生成人声轨、本地人声上传、试听和发群语音
+version: 0.9.1
+description: 语音模块的唱歌子插件，独立发布：Seed-VC 零样本歌声转换，支持曲目库选歌、语音模块念白生成人声轨、本地人声上传、试听和发群语音
 apiVersion: "1.0.0"
 depends: [voice, web, tools]
 optionalDepends: [qq]
 sub: []
-repository: https://github.com/FelixTaXk/whalelife-community-sing
+repository: https://github.com/FelixTaXk/whalelife-community-voice

@@ -1,7 +1,7 @@
 id: speak
 name: 说话
-version: 0.6.1
-description: 语音模块的说话子插件：音色库、Breeze / 本机 OpenAI 兼容 / 网络 TTS、本机播放、QQ 私聊语音；音色可生成、可克隆、可删除
+version: 0.6.2
+description: 语音模块的说话子插件，独立发布：音色库、Breeze / 本机 OpenAI 兼容 / 网络 TTS、本机播放、QQ 私聊语音；音色可生成、可克隆、可删除
 apiVersion: "1.0.0"
 depends: [voice, web, tools, models, sessions]
 optionalDepends: [qq]

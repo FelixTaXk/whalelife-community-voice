@@ -33,7 +33,7 @@
    └─ sing/
 ```
 
-唱歌 `sing` 作为语音模块的子插件，和说话一起放在 `plugins/voice/sub/sing`，设置页是 `/plugins/voice/sing/settings`。
+说话 `speak` 和唱歌 `sing` 作为语音模块的子插件独立发布，分别放在 `plugins/voice/sub/speak`、`plugins/voice/sub/sing`，设置页分别是 `/plugins/voice/speak/settings`、`/plugins/voice/sing/settings`。
 
 **不要**把模型装到插件目录以外的私人目录。插件只使用自己的 `data` 目录；如果配置里保留旧路径，部署时会迁移到插件目录。无图形环境或非 Windows 机器可以跳过 Breeze，直接使用本机 OpenAI 兼容服务或网络 TTS。
 
@@ -72,7 +72,7 @@ sub: [speak, sing]
 Invoke-RestMethod http://127.0.0.1:9270/api/status
 ```
 
-返回里有 `voice`、`voice/speak`、`voice/sing`，且 `status` 为 `active`。
+返回里至少有 `voice`；安装了子插件后还应有 `voice/speak`、`voice/sing`，且 `status` 为 `active`。
 
 如果插件没加载，先在 WhaleLife 设置页重载插件，或执行：
 
@@ -264,7 +264,7 @@ Get-CimInstance Win32_Process -Filter "Name='breeze-server.exe'" |
 
 ## 8. 可选：唱歌（Seed-VC）
 
-唱歌是语音模块的内置子插件，随 voice 包放在 `plugins/voice/sub/sing`，控制台设置页是 `/plugins/voice/sing/settings`。它不是一键部署范围，需要单独的 Python 环境和 Seed-VC 仓库。默认在语音模块目录 `plugins/voice/data/seed-vc` 查找，也可用环境变量指向已有环境：
+唱歌是语音模块的子插件，独立发布到 `plugins/voice/sub/sing`，控制台设置页是 `/plugins/voice/sing/settings`。它不是一键部署范围，需要单独的 Python 环境和 Seed-VC 仓库。默认在语音模块目录 `plugins/voice/data/seed-vc` 查找，也可用环境变量指向已有环境：
 
 ```powershell
 $env:WHALELIFE_SING_ROOT = 'D:\path\to\seed-vc'
@@ -289,13 +289,13 @@ $env:WHALELIFE_FFMPEG = 'ffmpeg'
 
 ## 10. 分发包说明
 
-随包发布的是 WhaleLife 官方 `.wlpkg.gz`，包根目录对应插件的 `plugins/voice`，安装后最终路径为：
+同一套代码拆成三个 `.wlpkg.gz`：
 
-```text
-<WhaleLife>\plugins\voice
-```
+- `voice-0.13.0-win32-x64.wlpkg.gz`：主插件根目录，安装到 `<WhaleLife>\plugins\voice`。
+- `speak-0.6.2-win32-x64.wlpkg.gz`：说话子插件，安装到 `<WhaleLife>\plugins\voice\sub\speak`。
+- `sing-0.9.1-win32-x64.wlpkg.gz`：唱歌子插件，安装到 `<WhaleLife>\plugins\voice\sub\sing`。
 
-包内包含主插件代码、清单、README、本手册、内置 `sub/speak` 和内置唱歌子插件 `sub/sing`，**不包含** `data/breeze`、模型、音色和下载缓存，所以体积仍然很小。装好后按第 3 节执行一键部署，模型和运行包会自动下载到 `data` 下。
+三个包都来自本仓库，代码文件不拆到别的仓库。包内不含 `data/breeze`、模型、音色和下载缓存。先装主插件，再按需安装说话和唱歌；商店会把父插件作为必需依赖处理。装好后按第 3 节执行一键部署，模型和运行包会自动下载到 `data` 下。
 
 如果包来自别人已经部署过的机器，仍然建议先检查 `data/breeze` 是否被误带进来；带了也可以直接用，但会失去“一键部署”的干净初始状态。
 

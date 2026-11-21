@@ -1,13 +1,13 @@
 # 语音模块
 
-语音模块只负责「接哪个语音模型」和「共享配置」。说话和唱歌都是内置子插件，随主插件一起安装，设置页收在语音模块下分组展示。
+语音模块只负责「接哪个语音模型」和「共享配置」。说话和唱歌作为独立发布的子插件，安装到 `plugins/voice/sub/` 下，设置页收在语音模块下分组展示。三个发行包都来自本仓库，代码文件不拆到别的仓库。
 
 | 插件 | 页面 | 工具 | 服务 |
 | --- | --- | --- | --- |
-| 说话 `speak`（内置） | `/plugins/voice/speak/settings` | `say_out_loud`、`qq_say`、`voice_list`、`voice_use`、`voice_create`、`voice_clone`、`voice_delete` | `voice/speak` |
-| 唱歌 `sing`（内置） | `/plugins/voice/sing/settings` | `voice_sing` | `voice/sing` |
+| 说话 `speak`（独立发布） | `/plugins/voice/speak/settings` | `say_out_loud`、`qq_say`、`voice_list`、`voice_use`、`voice_create`、`voice_clone`、`voice_delete` | `voice/speak` |
+| 唱歌 `sing`（独立发布） | `/plugins/voice/sing/settings` | `voice_sing` | `voice/sing` |
 
-主页面 `http://127.0.0.1:9270/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。说话和唱歌作为 `sub/speak`、`sub/sing` 子插件随包安装，控制台会按父级分组列出各自设置。
+主页面 `http://127.0.0.1:9270/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。商店里的主插件 `voice`、说话 `voice/speak`、唱歌 `voice/sing` 分别独立发布；子插件包安装到 `plugins/voice/sub/speak`、`plugins/voice/sub/sing`，父级控制台会分组列出设置。
 
 ## 本机语音一键部署
 
@@ -70,7 +70,7 @@ await voice.sing({ sourcePath: '...' }); // 唱歌子插件加载后可用；内
 
 ## 唱歌（子插件 sing，第一期 Seed-VC）
 
-唱歌作为语音模块的内置子插件，安装路径是 `plugins/voice/sub/sing`，运行 ID 是 `voice/sing`，设置页在 `/plugins/voice/sing/settings`，不再占一个顶层插件位置。源码保留在独立仓库 `FelixTaXk/whalelife-community-sing`，发布时作为语音包里的子插件一起打包。它复用语音模块的配置和数据目录，所以父级 `voice` 必须先启用；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
+唱歌作为语音模块的子插件独立发布，安装路径是 `plugins/voice/sub/sing`，运行 ID 是 `voice/sing`，设置页在 `/plugins/voice/sing/settings`，不占顶层插件位置。代码仍放在本仓库的 `sub/sing`，只是发行包单独构建；它复用语音模块的配置和数据目录，所以父级 `voice` 必须先启用；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
 
 | 环境变量 | 默认 |
 | --- | --- |
@@ -131,6 +131,6 @@ await voice.sing({ sourcePath: '...' }); // 唱歌子插件加载后可用；内
 3. 重启本体，或到控制台「插件管理」里重载该插件。
 4. 在「插件管理」确认状态为「运行中」；首次使用请打开插件设置页完成必要配置。
 
-本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。发行包包含主插件、内置说话子插件 `sub/speak` 和内置唱歌子插件 `sub/sing`；三者随包一起安装，不再需要单独装唱歌顶层插件。
+本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。仓库里保留主插件和 `sub/speak`、`sub/sing` 全部代码；发行时拆成三个包：`voice` 主插件包含根目录，`voice/speak` 和 `voice/sing` 子插件包分别从对应子目录构建。
 
 

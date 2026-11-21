@@ -117,7 +117,7 @@ export function apply(ctx: Context) {
       options?: { signal?: AbortSignal },
     ) => {
       if (!ctx.tools.list().some((t: any) => t?.function?.name === 'voice_sing'))
-        throw new Error('唱歌子插件没加载，先检查语音模块的 sub/sing。');
+        throw new Error('唱歌子插件没加载，先在商店安装“语音-唱歌”。');
       const call: any = await ctx.tools.call('voice_sing', input, { signal: options?.signal ?? ctx.signal } as any);
       const result = call?.result ?? call;
       if (result?.status !== 'ok' || !result?.file) throw new Error(result?.error || '唱歌失败');
@@ -749,9 +749,12 @@ section.card{background:var(--paper);border:1px solid var(--line);border-radius:
 h2{font-size:16px;margin:0}
 .deploy-bar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:14px 0 8px}
 .deploy-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
-label{display:grid;gap:6px;font-size:13px;color:var(--muted)}
-input,select{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink);width:100%}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;margin-top:12px}
+label{display:grid;gap:6px;font-size:13px;color:var(--muted);min-width:0}
+input,select{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink);width:100%;height:40px;min-width:0;box-sizing:border-box;line-height:1.5;vertical-align:middle}
+input[type=checkbox]{width:auto;height:auto}
+select{cursor:pointer}
+input[type=number]{font-variant-numeric:tabular-nums}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;margin-top:12px;align-items:start}
 .wide{grid-column:1/-1}
 .row{display:flex;gap:10px;align-items:center;margin-top:18px;flex-wrap:wrap}
 .row.tight{margin-top:10px}
@@ -771,7 +774,7 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 
 <section class="card">
   <div class="card-head"><h2>1 模型接入</h2></div>
-  <p class="sub">主插件只负责选模型、连服务、存共享配置。内置说话和唱歌子插件都从这里取配置。</p>
+  <p class="sub">主插件只负责选模型、连服务、存共享配置。说话和唱歌子插件都从这里取配置。</p>
   <div class="seg" id="engine"><button type="button" data-engine="local">本机模型</button><button type="button" data-engine="cloud">网络模型</button></div>
 
   <div id="localBox">
@@ -818,12 +821,12 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 
 <section class="card">
   <div class="card-head"><h2>2 说话与唱歌</h2></div>
-  <p class="sub">说话和唱歌都内置在本插件里，各自作为子插件提供音色库、TTS、歌声转换和 QQ 语音能力。</p>
+  <p class="sub">说话和唱歌都作为语音模块的子插件独立发布，安装后分别提供音色库、TTS、歌声转换和 QQ 语音能力。</p>
   <div class="row">
     <a class="link" href="/plugins/voice/speak/settings" data-console-href="#plugin:voice/speak">说话设置 →</a>
     ${hasSing
       ? '<a class="link" href="/plugins/voice/sing/settings" data-console-href="#plugin:voice/sing">唱歌设置 →</a>'
-      : '<span class="hint">唱歌子插件未加载；检查 voice 的 sub/sing 是否完整。</span>'}
+      : '<span class="hint">唱歌子插件未安装；到商店安装“语音-唱歌”。</span>'}
   </div>
   <p class="hint">说话和唱歌都依赖这里的模型配置，所以先保存模型设置，再进对应页面。</p>
 </section>

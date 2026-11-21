@@ -505,10 +505,13 @@ p.sub{margin:0;color:var(--muted);font-size:13px}
 section.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:18px 0}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
 h2{font-size:16px;margin:0}
-label{display:grid;gap:6px;font-size:13px;color:var(--muted)}
-input,select,textarea{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink);width:100%}
-textarea{min-height:92px;resize:vertical}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;margin-top:12px}
+label{display:grid;gap:6px;font-size:13px;color:var(--muted);min-width:0}
+input,select,textarea{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink);width:100%;height:40px;min-width:0;box-sizing:border-box;line-height:1.5;vertical-align:middle}
+textarea{min-height:92px;height:auto;resize:vertical}
+input[type=checkbox]{width:auto;height:auto}
+select{cursor:pointer}
+input[type=number]{font-variant-numeric:tabular-nums}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;margin-top:12px;align-items:start}
 .wide{grid-column:1/-1}
 .row{display:flex;gap:10px;align-items:center;margin-top:18px;flex-wrap:wrap}
 .row.tight{margin-top:10px}
