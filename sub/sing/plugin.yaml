@@ -1,8 +1,0 @@
-id: sing
-name: 唱歌
-version: 0.6.4
-description: 语音模块的唱歌子插件：Seed-VC 零样本歌声转换，支持曲目库选歌、带进度和日志的 Breeze 一键生成念白、本地音频上传、试听和发群语音
-apiVersion: "1.0.0"
-depends: [voice, web, tools]
-optionalDepends: [qq]
-sub: []

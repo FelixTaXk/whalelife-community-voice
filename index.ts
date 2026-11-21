@@ -1,6 +1,7 @@
-/*! 语音模块：只负责语音模型接入与共享配置；说话、唱歌在子插件里。 */
+/*! 语音模块：只负责语音模型接入与共享配置；说话内置，唱歌独立可选。 */
 
 import { spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { copyFile, link, mkdir, readdir, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
@@ -42,7 +43,7 @@ export function apply(ctx: Context) {
 
   ctx.tools.register({
     name: 'voice_status',
-    description: '查看语音模块接的是本机还是网络模型、模型名和地址，以及说话、唱歌两个子插件是否已加载。',
+    description: '查看语音模块接的是本机还是网络模型、模型名和地址，以及说话、唱歌插件是否已加载。',
     danger: 'safe',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     async run() {
@@ -91,13 +92,17 @@ export function apply(ctx: Context) {
       const { bytes, voice, target } = await synth(ctx, cfg, text, input?.voice, options?.signal ?? ctx.signal);
       return { mime: 'audio/wav', base64: bytes.toString('base64'), bytes: bytes.length, voice, engine: target.kind, model: target.name };
     },
+    stopBreeze: async () => {
+      const cfg = await readCfg();
+      return stopBreeze(cfg);
+    },
     sing: async (
       input: { sourcePath: string; ref?: string; steps?: number; cfgRate?: number; pitch?: number },
       options?: { signal?: AbortSignal },
     ) => {
       if (!ctx.tools.list().some((t: any) => t?.function?.name === 'voice_sing'))
-        throw new Error('唱歌子插件没启用，先把“唱歌”子插件打开。');
-      const call: any = await ctx.tools.call('voice_sing', input, { signal: options?.signal ?? ctx.signal });
+        throw new Error('唱歌插件没安装，先安装独立的“唱歌”插件。');
+      const call: any = await ctx.tools.call('voice_sing', input, { signal: options?.signal ?? ctx.signal } as any);
       const result = call?.result ?? call;
       if (result?.status !== 'ok' || !result?.file) throw new Error(result?.error || '唱歌失败');
       const bytes = await readFile(result.file);
@@ -700,6 +705,7 @@ export function apply(ctx: Context) {
 
   ctx.web.page('/plugins/voice/settings', async (_req, res) => {
     const cfg = await readCfg();
+    const hasSing = ctx.tools.list().some((t: any) => t?.function?.name === 'voice_sing');
     const cfgJson = JSON.stringify(cfg).replace(/</g, '\\u003c');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -736,11 +742,11 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:16px 0 0;white-space:pre-wrap;font-size:12px;color:var(--muted);min-height:18px}
 @media (max-width:640px){.grid{grid-template-columns:1fr}body{padding:20px 16px 28px}h1{font-size:23px}header{flex-direction:column}.seg{flex-direction:column}}
 </style></head><body><main>
-<header><div><h1>语音模块</h1><p class="sub">先在这里接模型 · 说话和唱歌分别去子插件</p></div><span class="pill" id="enginePill">本机模型</span></header>
+<header><div><h1>语音模块</h1><p class="sub">先在这里接模型 · 说话内置，唱歌可选</p></div><span class="pill" id="enginePill">本机模型</span></header>
 
 <section class="card">
   <div class="card-head"><h2>1 模型接入</h2></div>
-  <p class="sub">主插件只负责选模型、连服务、存共享配置。说话和唱歌两个子插件都从这里取配置。</p>
+  <p class="sub">主插件只负责选模型、连服务、存共享配置。内置说话插件和可选唱歌插件都从这里取配置。</p>
   <div class="seg" id="engine"><button type="button" data-engine="local">本机模型</button><button type="button" data-engine="cloud">网络模型</button></div>
 
   <div id="localBox">
@@ -780,10 +786,15 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 </section>
 
 <section class="card">
-  <div class="card-head"><h2>2 子插件</h2></div>
-  <p class="sub">模型配好后，去对应的子插件操作。说话负责音色库、TTS 和 QQ 语音；唱歌负责 Seed-VC 歌声转换。</p>
-  <div class="row"><a class="link" href="/plugins/voice/speak/settings" data-console-href="#plugin:voice/speak">说话设置 →</a><a class="link" href="/plugins/voice/sing/settings" data-console-href="#plugin:voice/sing">唱歌设置 →</a></div>
-  <p class="hint">两个子插件都依赖这里的配置，所以先保存模型设置，再进子插件。</p>
+  <div class="card-head"><h2>2 说话与唱歌</h2></div>
+  <p class="sub">说话已内置在本插件里，负责音色库、TTS 和 QQ 语音；唱歌是独立插件，按需另行安装。</p>
+  <div class="row">
+    <a class="link" href="/plugins/voice/speak/settings" data-console-href="#plugin:voice/speak">说话设置 →</a>
+    ${hasSing
+      ? '<a class="link" href="/plugins/sing/settings" data-console-href="#plugin:sing">唱歌设置 →</a>'
+      : '<span class="hint">唱歌插件未安装；需要时单独安装“唱歌”。</span>'}
+  </div>
+  <p class="hint">说话和唱歌都依赖这里的模型配置，所以先保存模型设置，再进对应页面。</p>
 </section>
 
 <section class="card">

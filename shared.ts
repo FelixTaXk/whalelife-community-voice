@@ -1,4 +1,4 @@
-/*! 语音模块共享配置与基础工具：主插件、说话子插件、唱歌子插件共用。 */
+/*! 语音模块共享配置与基础工具：主插件、内置说话子插件、独立唱歌插件共用路径约定。 */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
