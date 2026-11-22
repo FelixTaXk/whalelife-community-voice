@@ -1,13 +1,13 @@
 # 语音模块
 
-语音模块只负责「接哪个语音模型」和「共享配置」。0.14.0 起主插件发行包只包含主插件，说话和唱歌作为独立商店条目分别安装，代码仍保留在同一仓库的 `sub/speak`、`sub/sing` 下。旧合包用户更新时，宿主会按旧包的 `bundledPluginIds` 重新安装两个独立子包，配置和数据保留。
+语音模块只负责「接哪个语音模型」和「共享配置」。0.15.0 恢复为单一合并发行：说话和唱歌仍保留各自的版本号与代码目录 `sub/speak`、`sub/sing`，但随主插件一起安装，不再作为独立商店条目。主设置页可以分别启用或停用两个子插件；停用不会删除配置和数据。
 
 | 插件 | 页面 | 工具 | 服务 |
 | --- | --- | --- | --- |
-| 说话 `speak`（独立商店条目） | `/plugins/voice/speak/settings` | `say_out_loud`、`qq_say`、`voice_list`、`voice_use`、`voice_create`、`voice_clone`、`voice_delete` | `voice/speak` |
-| 唱歌 `sing`（独立商店条目） | `/plugins/voice/sing/settings` | `voice_sing` | `voice/sing` |
+| 说话 `speak`（随主插件安装，v0.6.2） | `/plugins/voice/speak/settings` | `say_out_loud`、`qq_say`、`voice_list`、`voice_use`、`voice_create`、`voice_clone`、`voice_delete` | `voice/speak` |
+| 唱歌 `sing`（随主插件安装，v0.9.1） | `/plugins/voice/sing/settings` | `voice_sing` | `voice/sing` |
 
-主页面 `/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。0.14.0 商店主包只装 `plugins/voice` 根目录，不再包含 `sub/`；说话和唱歌分别以 `voice/speak`、`voice/sing` 条目安装到 `plugins/voice/sub/speak`、`plugins/voice/sub/sing`，父级控制台会分组列出设置。
+主页面 `/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。0.15.0 商店主包包含完整的 `plugins/voice`，其中 `sub/speak`、`sub/sing` 一并安装；父级控制台会分组列出子插件，主设置页提供各自的启停开关。
 
 ## 本机语音一键部署
 
@@ -70,7 +70,7 @@ await voice.sing({ sourcePath: '...' }); // 唱歌子插件加载后可用；内
 
 ## 唱歌（子插件 sing，第一期 Seed-VC）
 
-唱歌作为语音模块的独立子插件，安装路径是 `plugins/voice/sub/sing`，运行 ID 是 `voice/sing`，设置页在 `/plugins/voice/sing/settings`，不占顶层插件位置。0.14.0 起它单独作为商店条目发布；代码仍放在本仓库的 `sub/sing`。它复用语音模块的配置和数据目录，所以父级 `voice` 必须先启用；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
+唱歌作为语音模块的子插件，安装路径是 `plugins/voice/sub/sing`，运行 ID 是 `voice/sing`，设置页在 `/plugins/voice/sing/settings`，不占顶层插件位置。0.15.0 起随主插件一起安装，不单独上架；可以在主设置页停用/启用，代码仍放在本仓库的 `sub/sing`。它复用语音模块的配置和数据目录，所以父级 `voice` 必须先启用；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
 
 | 环境变量 | 默认 |
 | --- | --- |
@@ -131,6 +131,6 @@ await voice.sing({ sourcePath: '...' }); // 唱歌子插件加载后可用；内
 3. 重启本体，或到控制台「插件管理」里重载该插件。
 4. 在「插件管理」确认状态为「运行中」；首次使用请打开插件设置页完成必要配置。
 
-本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。仓库里保留主插件和 `sub/speak`、`sub/sing` 全部代码。0.14.0 商店主包只含主插件；说话、唱歌分别作为独立条目发行。手动安装也可以分别使用三个包，先装主插件，再装需要的子插件。
+本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。仓库里保留主插件和 `sub/speak`、`sub/sing` 全部代码。0.15.0 商店主包是完整合并包，一次安装即带两个子插件；不再提供独立子插件包。
 
 

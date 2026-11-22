@@ -730,8 +730,6 @@ export function apply(ctx: Context) {
 
   ctx.web.page('/plugins/voice/settings', async (_req, res) => {
     const cfg = await readCfg();
-    const hasSpeak = ctx.tools.list().some((t: any) => t?.function?.name === 'say_out_loud');
-    const hasSing = ctx.tools.list().some((t: any) => t?.function?.name === 'voice_sing');
     const cfgJson = JSON.stringify(cfg).replace(/</g, '\\u003c');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -768,14 +766,22 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .hint{color:var(--muted);font-size:12px;margin:10px 0 0}
 #deployInfo{white-space:pre-line}
 .link{color:var(--accent);font-size:13px;text-decoration:none;padding:8px 12px;border:1px solid var(--line);border-radius:8px}
+.child{display:grid;gap:8px;padding:12px 0;border-top:1px solid var(--line);margin-top:10px}
+.child:first-of-type{border-top:0;margin-top:0;padding-top:0}
+.child-main{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.child-main strong{font-size:14px}
+.child-ver{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.state{font-size:12px;border:1px solid var(--line);border-radius:99px;padding:2px 9px;color:var(--muted)}
+.state.on{color:var(--accent);border-color:var(--accent)}
+.child .row{margin-top:0}
 pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:16px 0 0;white-space:pre-wrap;font-size:12px;color:var(--muted);min-height:18px}
 @media (max-width:640px){.grid{grid-template-columns:1fr}body{padding:20px 16px 28px}h1{font-size:23px}header{flex-direction:column}.seg{flex-direction:column}}
 </style></head><body><main>
-<header><div><h1>语音模块</h1><p class="sub">先在这里接模型 · 说话与唱歌是独立子插件</p></div><span class="pill" id="enginePill">本机模型</span></header>
+<header><div><h1>语音模块</h1><p class="sub">先在这里接模型 · 说话与唱歌随主插件安装，可单独启用或停用</p></div><span class="pill" id="enginePill">本机模型</span></header>
 
 <section class="card">
   <div class="card-head"><h2>1 模型接入</h2></div>
-  <p class="sub">主插件只负责选模型、连服务、存共享配置。说话和唱歌子插件从插件商店分别安装，都从这里取配置。</p>
+  <p class="sub">主插件负责选模型、连服务、存共享配置。说话和唱歌随语音模块一起安装，都从这里取配置。</p>
   <div class="seg" id="engine"><button type="button" data-engine="local">本机模型</button><button type="button" data-engine="cloud">网络模型</button></div>
 
   <div id="localBox">
@@ -821,17 +827,23 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 </section>
 
 <section class="card">
-  <div class="card-head"><h2>2 说话与唱歌</h2></div>
-  <p class="sub">说话和唱歌是独立子插件，可在插件商店分别安装；安装后分别提供音色库、TTS、歌声转换和 QQ 语音能力。</p>
-  <div class="row">
-    ${hasSpeak
-      ? '<a class="link" href="/plugins/voice/speak/settings" data-console-href="#plugin:voice/speak">说话设置 →</a>'
-      : '<span class="hint">说话子插件未安装或未启用；到插件商店安装“语音-说话”。</span>'}
-    ${hasSing
-      ? '<a class="link" href="/plugins/voice/sing/settings" data-console-href="#plugin:voice/sing">唱歌设置 →</a>'
-      : '<span class="hint">唱歌子插件未安装或未启用；到插件商店安装“语音-唱歌”。</span>'}
+  <div class="card-head"><h2>2 说话与唱歌</h2><span class="pill">随主插件安装</span></div>
+  <p class="sub">说话与唱歌随语音模块一起安装，版本各自独立。可在这里单独启用或停用；停用只影响对应子插件，配置和数据保留。</p>
+  <div class="child" data-child="voice/speak">
+    <div class="child-main"><strong>说话</strong><span class="child-ver">v0.6.2</span><span class="state" id="state-speak">检查中…</span></div>
+    <div class="row">
+      <a class="link" id="link-speak" href="/plugins/voice/speak/settings" data-console-href="#plugin:voice/speak">说话设置 →</a>
+      <button type="button" id="toggle-speak" data-id="voice/speak" data-active="false">启用</button>
+    </div>
   </div>
-  <p class="hint">说话和唱歌都依赖这里的模型配置，所以先保存模型设置，再进对应页面。</p>
+  <div class="child" data-child="voice/sing">
+    <div class="child-main"><strong>唱歌</strong><span class="child-ver">v0.9.1</span><span class="state" id="state-sing">检查中…</span></div>
+    <div class="row">
+      <a class="link" id="link-sing" href="/plugins/voice/sing/settings" data-console-href="#plugin:voice/sing">唱歌设置 →</a>
+      <button type="button" id="toggle-sing" data-id="voice/sing" data-active="false">启用</button>
+    </div>
+  </div>
+  <p class="hint">说话和唱歌都依赖这里的模型配置；启用后进对应页面配置。停用不会删除子插件的配置或数据。</p>
 </section>
 
 <section class="card">
@@ -882,6 +894,48 @@ async function post(url, body) {
   const text = await r.text();
   try { return JSON.parse(text); } catch (e) { return { ok: false, error: text || ('HTTP ' + r.status) }; }
 }
+async function getJson(url) {
+  const r = await fetch(url);
+  const text = await r.text();
+  try { return JSON.parse(text); } catch (e) { return { ok: false, error: text || ('HTTP ' + r.status) }; }
+}
+const CHILDREN = {
+  'voice/speak': { state: 'state-speak', link: 'link-speak', button: 'toggle-speak' },
+  'voice/sing': { state: 'state-sing', link: 'link-sing', button: 'toggle-sing' },
+};
+function paintChild(id, p) {
+  const meta = CHILDREN[id];
+  if (!meta) return;
+  const state = $(meta.state), link = $(meta.link), button = $(meta.button);
+  const active = Boolean(p && p.status === 'active' && p.enabled !== false);
+  state.textContent = !p ? '未安装' : active ? '已启用' : (p.status === 'stopped' ? '已停用' : (p.status || '不可用'));
+  state.classList.toggle('on', active);
+  link.hidden = !active;
+  button.disabled = !p;
+  button.dataset.active = active ? 'true' : 'false';
+  button.textContent = active ? '停用' : '启用';
+}
+async function refreshChildren() {
+  const j = await getJson('/api/status');
+  if (!j || !Array.isArray(j.plugins)) { out(j && j.error || '读取子插件状态失败'); return; }
+  for (const id of Object.keys(CHILDREN)) paintChild(id, j.plugins.find(function (p) { return p.id === id; }));
+}
+async function toggleChild(id) {
+  const meta = CHILDREN[id];
+  if (!meta) return;
+  const button = $(meta.button);
+  const active = button.dataset.active === 'true';
+  const action = active ? 'stop' : 'start';
+  button.disabled = true;
+  out((active ? '正在停用 ' : '正在启用 ') + id + '…');
+  const r = await post('/api/plugin', { id: id, action: action });
+  if (!r.ok) out(r.error || (action === 'stop' ? '停用失败' : '启用失败'));
+  else out((active ? '已停用 ' : '已启用 ') + id + '。');
+  await refreshChildren();
+}
+$('toggle-speak').onclick = function () { return toggleChild('voice/speak'); };
+$('toggle-sing').onclick = function () { return toggleChild('voice/sing'); };
+refreshChildren();
 function paint() {
   const local = draftEngine === 'local';
   $('localBox').hidden = !local;
