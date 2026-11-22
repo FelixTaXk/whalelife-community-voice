@@ -1,13 +1,13 @@
 # 语音模块
 
-语音模块只负责「接哪个语音模型」和「共享配置」。说话和唱歌作为独立发布的子插件，安装到 `plugins/voice/sub/` 下，设置页收在语音模块下分组展示。三个发行包都来自本仓库，代码文件不拆到别的仓库。
+语音模块只负责「接哪个语音模型」和「共享配置」。说话和唱歌作为子插件，安装到 `plugins/voice/sub/` 下，设置页收在语音模块下分组展示。0.13.1 是商店过渡版，父包仍包含两个子插件，保证从 0.9.4 无损升级；0.13.0 的三包拆分发保留在 Release，等宿主支持从合包迁移为独立插件后再切换。
 
 | 插件 | 页面 | 工具 | 服务 |
 | --- | --- | --- | --- |
-| 说话 `speak`（独立发布） | `/plugins/voice/speak/settings` | `say_out_loud`、`qq_say`、`voice_list`、`voice_use`、`voice_create`、`voice_clone`、`voice_delete` | `voice/speak` |
-| 唱歌 `sing`（独立发布） | `/plugins/voice/sing/settings` | `voice_sing` | `voice/sing` |
+| 说话 `speak`（随 0.13.1 父包安装） | `/plugins/voice/speak/settings` | `say_out_loud`、`qq_say`、`voice_list`、`voice_use`、`voice_create`、`voice_clone`、`voice_delete` | `voice/speak` |
+| 唱歌 `sing`（随 0.13.1 父包安装） | `/plugins/voice/sing/settings` | `voice_sing` | `voice/sing` |
 
-主页面 `http://127.0.0.1:9270/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。商店里的主插件 `voice`、说话 `voice/speak`、唱歌 `voice/sing` 分别独立发布；子插件包安装到 `plugins/voice/sub/speak`、`plugins/voice/sub/sing`，父级控制台会分组列出设置。
+主页面 `http://127.0.0.1:9270/plugins/voice/settings` 只管模型接入：本机 Breeze、本机 OpenAI 兼容服务或网络 OpenAI 兼容 TTS、连接测试、引擎路径与显存。0.13.1 商店包把说话和唱歌一起装到 `plugins/voice/sub/speak`、`plugins/voice/sub/sing`，父级控制台会分组列出设置；独立子插件包暂不作为商店条目。
 
 ## 本机语音一键部署
 
@@ -70,7 +70,7 @@ await voice.sing({ sourcePath: '...' }); // 唱歌子插件加载后可用；内
 
 ## 唱歌（子插件 sing，第一期 Seed-VC）
 
-唱歌作为语音模块的子插件独立发布，安装路径是 `plugins/voice/sub/sing`，运行 ID 是 `voice/sing`，设置页在 `/plugins/voice/sing/settings`，不占顶层插件位置。代码仍放在本仓库的 `sub/sing`，只是发行包单独构建；它复用语音模块的配置和数据目录，所以父级 `voice` 必须先启用；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
+唱歌作为语音模块的子插件，安装路径是 `plugins/voice/sub/sing`，运行 ID 是 `voice/sing`，设置页在 `/plugins/voice/sing/settings`，不占顶层插件位置。0.13.1 过渡期它随父包一起安装；代码仍放在本仓库的 `sub/sing`，独立子插件包保留在 Release，暂不作为商店条目。它复用语音模块的配置和数据目录，所以父级 `voice` 必须先启用；还需要另外准备 Seed-VC 环境。默认按语音模块目录 `data/seed-vc` 查找，也可以用环境变量指向已有环境：
 
 | 环境变量 | 默认 |
 | --- | --- |
@@ -131,6 +131,6 @@ await voice.sing({ sourcePath: '...' }); // 唱歌子插件加载后可用；内
 3. 重启本体，或到控制台「插件管理」里重载该插件。
 4. 在「插件管理」确认状态为「运行中」；首次使用请打开插件设置页完成必要配置。
 
-本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。仓库里保留主插件和 `sub/speak`、`sub/sing` 全部代码；发行时拆成三个包：`voice` 主插件包含根目录，`voice/speak` 和 `voice/sing` 子插件包分别从对应子目录构建。
+本插件不包含任何运行时数据（`data/` 已被忽略），升级时直接覆盖源码即可保留你自己的配置。仓库里保留主插件和 `sub/speak`、`sub/sing` 全部代码。0.13.1 商店过渡包包含根目录和两个子插件；0.13.0 的三包拆分发保留在 Release，等宿主支持从合包迁移为独立插件后再切换。手动安装仍可分别使用 `voice`、`speak`、`sing` 三个包。
 
 
