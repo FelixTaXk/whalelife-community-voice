@@ -117,7 +117,7 @@ export function apply(ctx: Context) {
       options?: { signal?: AbortSignal },
     ) => {
       if (!ctx.tools.list().some((t: any) => t?.function?.name === 'voice_sing'))
-        throw new Error('唱歌子插件没有随语音模块加载；请重新安装语音模块 0.13.1 完整包（含说话和唱歌）。');
+        throw new Error('唱歌子插件没有加载；请到插件商店安装或启用“语音-唱歌”（voice/sing）。');
       const call: any = await ctx.tools.call('voice_sing', input, { signal: options?.signal ?? ctx.signal } as any);
       const result = call?.result ?? call;
       if (result?.status !== 'ok' || !result?.file) throw new Error(result?.error || '唱歌失败');
@@ -730,6 +730,7 @@ export function apply(ctx: Context) {
 
   ctx.web.page('/plugins/voice/settings', async (_req, res) => {
     const cfg = await readCfg();
+    const hasSpeak = ctx.tools.list().some((t: any) => t?.function?.name === 'say_out_loud');
     const hasSing = ctx.tools.list().some((t: any) => t?.function?.name === 'voice_sing');
     const cfgJson = JSON.stringify(cfg).replace(/</g, '\\u003c');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -770,11 +771,11 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:16px 0 0;white-space:pre-wrap;font-size:12px;color:var(--muted);min-height:18px}
 @media (max-width:640px){.grid{grid-template-columns:1fr}body{padding:20px 16px 28px}h1{font-size:23px}header{flex-direction:column}.seg{flex-direction:column}}
 </style></head><body><main>
-<header><div><h1>语音模块</h1><p class="sub">先在这里接模型 · 说话与唱歌随主插件安装</p></div><span class="pill" id="enginePill">本机模型</span></header>
+<header><div><h1>语音模块</h1><p class="sub">先在这里接模型 · 说话与唱歌是独立子插件</p></div><span class="pill" id="enginePill">本机模型</span></header>
 
 <section class="card">
   <div class="card-head"><h2>1 模型接入</h2></div>
-  <p class="sub">主插件只负责选模型、连服务、存共享配置。说话和唱歌子插件随本包安装，都从这里取配置。</p>
+  <p class="sub">主插件只负责选模型、连服务、存共享配置。说话和唱歌子插件从插件商店分别安装，都从这里取配置。</p>
   <div class="seg" id="engine"><button type="button" data-engine="local">本机模型</button><button type="button" data-engine="cloud">网络模型</button></div>
 
   <div id="localBox">
@@ -821,12 +822,14 @@ pre{background:var(--soft);border:1px solid var(--line);border-radius:8px;paddin
 
 <section class="card">
   <div class="card-head"><h2>2 说话与唱歌</h2></div>
-  <p class="sub">说话和唱歌都随语音模块一起安装，分别提供音色库、TTS、歌声转换和 QQ 语音能力。</p>
+  <p class="sub">说话和唱歌是独立子插件，可在插件商店分别安装；安装后分别提供音色库、TTS、歌声转换和 QQ 语音能力。</p>
   <div class="row">
-    <a class="link" href="/plugins/voice/speak/settings" data-console-href="#plugin:voice/speak">说话设置 →</a>
+    ${hasSpeak
+      ? '<a class="link" href="/plugins/voice/speak/settings" data-console-href="#plugin:voice/speak">说话设置 →</a>'
+      : '<span class="hint">说话子插件未安装或未启用；到插件商店安装“语音-说话”。</span>'}
     ${hasSing
       ? '<a class="link" href="/plugins/voice/sing/settings" data-console-href="#plugin:voice/sing">唱歌设置 →</a>'
-      : '<span class="hint">唱歌子插件未加载；请重新安装语音模块 0.13.1 完整包。</span>'}
+      : '<span class="hint">唱歌子插件未安装或未启用；到插件商店安装“语音-唱歌”。</span>'}
   </div>
   <p class="hint">说话和唱歌都依赖这里的模型配置，所以先保存模型设置，再进对应页面。</p>
 </section>

@@ -33,7 +33,7 @@
    └─ sing/
 ```
 
-说话 `speak` 和唱歌 `sing` 作为语音模块的子插件，分别放在 `plugins/voice/sub/speak`、`plugins/voice/sub/sing`，设置页分别是 `/plugins/voice/speak/settings`、`/plugins/voice/sing/settings`。0.13.1 商店过渡包仍把两个子插件随父包一起安装；独立子插件包只用于手动安装和后续迁移验证。
+说话 `speak` 和唱歌 `sing` 是语音模块的独立子插件，分别安装到 `plugins/voice/sub/speak`、`plugins/voice/sub/sing`，设置页分别是 `/plugins/voice/speak/settings`、`/plugins/voice/sing/settings`。0.14.0 起它们各自作为商店条目发布；主插件包只含根目录，不再包含 `sub/`。
 
 **不要**把模型装到插件目录以外的私人目录。插件只使用自己的 `data` 目录；如果配置里保留旧路径，部署时会迁移到插件目录。无图形环境或非 Windows 机器可以跳过 Breeze，直接使用本机 OpenAI 兼容服务或网络 TTS。
 
@@ -264,7 +264,7 @@ Get-CimInstance Win32_Process -Filter "Name='breeze-server.exe'" |
 
 ## 8. 可选：唱歌（Seed-VC）
 
-唱歌是语音模块的子插件，安装到 `plugins/voice/sub/sing`，控制台设置页是 `/plugins/voice/sing/settings`。0.13.1 过渡期随父包一起安装。它不是一键部署范围，需要单独的 Python 环境和 Seed-VC 仓库。默认在语音模块目录 `plugins/voice/data/seed-vc` 查找，也可用环境变量指向已有环境：
+唱歌是语音模块的独立子插件，安装到 `plugins/voice/sub/sing`，控制台设置页是 `/plugins/voice/sing/settings`。0.14.0 起单独作为商店条目发布。它不是一键部署范围，需要单独的 Python 环境和 Seed-VC 仓库。默认在语音模块目录 `plugins/voice/data/seed-vc` 查找，也可用环境变量指向已有环境：
 
 ```powershell
 $env:WHALELIFE_SING_ROOT = 'D:\path\to\seed-vc'
@@ -289,13 +289,13 @@ $env:WHALELIFE_FFMPEG = 'ffmpeg'
 
 ## 10. 分发包说明
 
-0.13.1 是商店过渡版，父包仍包含两个子插件：
+0.14.0 是三个独立商店条目，主包只含主插件：
 
-- `voice-0.13.1-win32-x64.wlpkg.gz`：主插件根目录和 `sub/speak`、`sub/sing`，安装到 `<WhaleLife>\plugins\voice`。
-- `speak-0.6.2-win32-x64.wlpkg.gz`：可单独手动安装的说话子插件，安装到 `<WhaleLife>\plugins\voice\sub\speak`。
-- `sing-0.9.1-win32-x64.wlpkg.gz`：可单独手动安装的唱歌子插件，安装到 `<WhaleLife>\plugins\voice\sub\sing`。
+- `voice-0.14.0-win32-x64.wlpkg.gz`：只含主插件根目录，安装到 `<WhaleLife>\plugins\voice`；不含 `sub/`。
+- `speak-0.6.2-win32-x64.wlpkg.gz`：说话子插件，作为 `voice/speak` 条目安装到 `<WhaleLife>\plugins\voice\sub\speak`。
+- `sing-0.9.1-win32-x64.wlpkg.gz`：唱歌子插件，作为 `voice/sing` 条目安装到 `<WhaleLife>\plugins\voice\sub\sing`。
 
-0.13.0 的三包拆分发仍保留在 Release，但商店暂不单独上架两个子插件。原因是旧用户从 0.9.4 更新时，商店会先卸载旧合包；只装不含 `sub/` 的父包会让说话和唱歌消失，数据虽保留但功能不可用。0.13.1 合并包解决了这条升级路径。
+从旧合包升级时，商店会先卸载旧父包，再安装 0.14.0 主包，并按旧包的 `bundledPluginIds` 重新安装说话和唱歌的独立子包；`plugins/voice/data` 不删，配置、音色和任务记录保留。旧的 0.9.4、0.13.1 发行包在商店目录里标记为 `legacy`，只用于识别已安装版本和提供升级来源，不再作为新安装目标。
 
 三个包都来自本仓库，代码文件不拆到别的仓库。包内不含 `data/breeze`、模型、音色和下载缓存。手动安装时先装主插件，再按需安装说话和唱歌；装好后按第 3 节执行一键部署，模型和运行包会自动下载到 `data` 下。
 
